@@ -1,34 +1,44 @@
-.PHONY: help install test lint typecheck fix pre-commit
+PYTHON ?= python
+
+.PHONY: help install test test-no-git lint typecheck format check build verify-wheel
 
 help:
 	@echo "Available targets:"
-	@echo "  install     Install all dependencies"
-	@echo "  test        Run tests"
-	@echo "  lint        Run ruff linter"
-	@echo "  typecheck   Run mypy"
-	@echo "  fix         Auto-fix lint issues"
-	@echo "  pre-commit  Run all pre-commit hooks"
+	@echo "  install       Install the project and development dependencies"
+	@echo "  test          Run the test suite"
+	@echo "  test-no-git   Run tests except remote Git integration tests"
+	@echo "  lint          Run lint, formatting, and docstring checks"
+	@echo "  typecheck     Run mypy"
+	@echo "  format        Apply Ruff fixes and formatting"
+	@echo "  check         Run tests, lint, and type checking"
+	@echo "  build         Build the Linux wheel"
+	@echo "  verify-wheel  Verify the built release wheel"
 
 install:
-	uv sync --all-extras
-	uv run pre-commit install
+	$(PYTHON) -m pip install -e ".[dev,mcp]"
 
 test:
-	uv run pytest
+	$(PYTHON) -m pytest
 
 test-no-git:
-	uv run pytest --ignore=tests/test_git.py
+	$(PYTHON) -m pytest --ignore=tests/test_git.py
 
 lint:
-	uv run ruff check src/ tests/
-	uv run pydoclint src/
+	$(PYTHON) -m ruff check src tests scripts setup.py
+	$(PYTHON) -m ruff format --check src tests scripts setup.py
+	pydoclint src
 
 typecheck:
-	uv run mypy src/
+	$(PYTHON) -m mypy src
 
-fix:
-	uv run ruff check --fix src/ tests/
-	uv run ruff format src/ tests/
+format:
+	$(PYTHON) -m ruff check --fix src tests scripts setup.py
+	$(PYTHON) -m ruff format src tests scripts setup.py
 
-pre-commit:
-	uv run pre-commit run --all-files
+check: test lint typecheck
+
+build:
+	$(PYTHON) -m build --wheel
+
+verify-wheel:
+	$(PYTHON) scripts/verify_wheel.py dist/semble-0.5.1+offline.1-py3-none-manylinux_2_34_x86_64.whl

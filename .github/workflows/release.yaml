@@ -1,40 +1,67 @@
-name: Release to PyPI
+name: GitHub Release wheel
 
 on:
-  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
 
 jobs:
-  build:
-    name: Build distribution
+  release:
+    name: Build and attach wheel
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Build package
-        run: uv build
-
-      - name: Upload dist
-        uses: actions/upload-artifact@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          name: dist
-          path: dist/
-
-  publish:
-    name: Publish to PyPI
-    needs: build
-    runs-on: ubuntu-latest
-    environment: release
-    permissions:
-      id-token: write
-    steps:
-      - name: Download dist
-        uses: actions/download-artifact@v4
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          name: dist
-          path: dist/
+          python-version: "3.12"
+          cache: pip
 
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Validate release tag
+        run: |
+          expected="v$(python -c 'import runpy; print(runpy.run_path("src/semble/version.py")["__version__"])')"
+          test "$GITHUB_REF_NAME" = "$expected"
+
+      - name: Install build and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build auditwheel
+
+      - name: Run source tests
+        run: |
+          python -m pip install ".[dev,mcp]"
+          python -m pytest
+
+      - name: Build reproducible wheel
+        run: |
+          export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
+          python -m build --wheel --outdir dist
+          python -m build --wheel --outdir /tmp/semble-wheel-rebuild
+          cmp dist/*.whl /tmp/semble-wheel-rebuild/*.whl
+
+      - name: Verify wheel contents and compatibility
+        run: |
+          python scripts/verify_wheel.py dist/*.whl
+          python -m auditwheel show dist/*.whl
+
+      - name: Test installed wheel without runtime network access
+        run: |
+          python -m venv /tmp/semble-wheel-test
+          /tmp/semble-wheel-test/bin/python -m pip install "$PWD/dist/semble-0.5.1+offline.1-py3-none-manylinux_2_34_x86_64.whl[mcp]"
+          HF_HUB_OFFLINE=1 HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 /tmp/semble-wheel-test/bin/python -m semble doctor --full
+
+      - name: Create checksums
+        run: sha256sum dist/*.whl > dist/SHA256SUMS
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/*.whl dist/SHA256SUMS --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.whl dist/SHA256SUMS --verify-tag --generate-notes --title "Semble Offline $GITHUB_REF_NAME"
+          fi
