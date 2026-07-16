@@ -1,6 +1,13 @@
 # Troubleshooting
 
-Start with `python -m semble doctor --full`. It checks the supported platform, manifest, model files, all asset hashes, representative parser aliases, the embedding model, and the optional MCP dependencies.
+Start with:
+
+```bash
+python -m semble --version
+python -m semble doctor --full
+```
+
+The full check validates the platform, manifest, model files, every asset hash, representative parser aliases, the embedding model, and the optional MCP dependencies. Fix the first failed check before debugging agent configuration.
 
 ## The wheel is not supported on this platform
 
@@ -8,15 +15,29 @@ The release wheel is intentionally tagged `manylinux_2_34_x86_64`. It requires L
 
 ## MCP dependencies are missing
 
-Reinstall the same release wheel or tagged Git URL with the `[mcp]` extra. Avoid an unqualified install from PyPI because that can resolve upstream Semble instead of this fork.
+Reinstall the tagged version with the `[mcp]` extra:
+
+```bash
+python -m pip install --upgrade --force-reinstall "semble[mcp] @ git+https://github.com/pszemraj/semble-offline.git@v0.5.1+offline.1"
+python -m semble doctor --full
+```
+
+Do not use an unqualified install from PyPI because it can resolve upstream Semble instead of this distribution.
 
 ## An agent starts the wrong Semble
 
-Run `semble install` again from the environment containing Semble Offline. Current installer output uses that environment's absolute Python executable and `-m semble`. Remove stale entries containing a package runner or a different interpreter.
+Activate the environment containing Semble Offline, verify it, and rewrite the agent entry:
+
+```bash
+python -m semble --version
+semble install
+```
+
+The installer uses that environment's absolute Python executable and `-m semble`. Restart the agent after updating its configuration. Remove stale entries that point to a different interpreter.
 
 ## A bundled asset is missing or has the wrong hash
 
-Reinstall from a trusted release wheel and verify its checksum against the release's `SHA256SUMS`. Do not allow a missing asset to be repaired through a runtime download; fail-closed behavior is intentional.
+Reinstall from the release wheel, verify its checksum against the release's `SHA256SUMS`, then rerun full diagnostics. Missing assets are not repaired through runtime downloads; fail-closed behavior is intentional.
 
 ## EBNF uses line chunking
 
@@ -28,4 +49,8 @@ This is expected. The EBNF grammar in the source language-pack release is GPL-3.
 
 ## Installation works but a remote repository search fails
 
-The offline guarantee covers automatic model and grammar acquisition. Passing an HTTP, SSH, or other Git URL to `semble search` explicitly requests a clone and still requires network access. Clone or transfer the repository first, then search its local path.
+The offline guarantee covers automatic model and grammar acquisition. A remote Git URL explicitly requests a clone and still requires network access. Clone or transfer the repository first, then search its local path:
+
+```bash
+semble search "the behavior to find" /local/path/to/repository
+```

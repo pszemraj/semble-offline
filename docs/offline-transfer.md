@@ -1,26 +1,44 @@
 # Offline transfer
 
-The release wheel contains Semble's model and grammar assets, but it does not vendor ordinary Python dependencies. A fully disconnected target therefore needs the release wheel and compatible wheels for all dependencies.
+The release wheel contains Semble's model and grammar assets, but it does not vendor ordinary Python dependencies. A fully disconnected target needs the release wheel and compatible wheels for all dependencies.
 
-Run the download step on a connected Linux x86_64 system with the same Python minor version as the target. Activate a temporary environment, then download the complete wheel set:
+## 1. Download on a connected machine
+
+Use a connected Linux x86_64 system with the same Python minor version as the target. Activate a staging environment, then paste:
 
 ```bash
 mkdir semble-offline-wheels
 python -m pip download --only-binary=:all: --dest semble-offline-wheels "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.5.1%2Boffline.1/semble-0.5.1%2Boffline.1-py3-none-manylinux_2_34_x86_64.whl"
 ```
 
-Transfer `semble-offline-wheels/` through the approved mechanism. On the disconnected target, activate the destination environment and install only from that directory:
+The resulting `semble-offline-wheels/` directory is the complete transfer payload.
+
+## 2. Transfer the wheel directory
+
+Move `semble-offline-wheels/` to the disconnected machine through the approved transfer mechanism. Preserve every file in the directory.
+
+## 3. Install on the disconnected target
+
+Activate the destination environment, change to the directory containing `semble-offline-wheels/`, then paste:
 
 ```bash
 python -m pip install --no-index --find-links ./semble-offline-wheels "semble[mcp]==0.5.1+offline.1"
 ```
 
-Then prove that runtime operation does not need the network:
+`--no-index` prevents the installer from contacting a package index and `--find-links` restricts dependency resolution to the transferred directory.
+
+## 4. Verify without network access
+
+Run diagnostics with invalid proxy endpoints so an accidental network request fails immediately:
 
 ```bash
 HF_HUB_OFFLINE=1 HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 python -m semble doctor --full
 ```
 
-An organization with an internal Python package repository can upload the release wheel there instead. In that setup, users can install the exact wheel through the internal index after the repository administrator makes it available; no public PyPI publication is required.
+The command should end with `All required checks passed.` You can now run `semble install` to configure an agent on the disconnected machine.
 
-If `pip download --only-binary=:all:` cannot find a binary dependency for the target Python version, resolve that dependency in the connected staging environment before transfer. Do not build arbitrary source distributions on the disconnected production target unless that is already part of the organization's package review process.
+## Internal package index
+
+An organization with an internal Python package repository can upload the release wheel there instead. Users can then install the exact wheel and its dependencies through the internal index; public PyPI publication is not required.
+
+If `pip download --only-binary=:all:` cannot find a binary dependency for the target Python version, resolve that dependency on the connected staging system before transfer. Do not build arbitrary source distributions on the disconnected production target unless that is already part of the organization's package review process.
