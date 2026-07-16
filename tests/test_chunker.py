@@ -2,7 +2,6 @@ import logging
 from unittest.mock import patch
 
 import pytest
-from tree_sitter_language_pack import DownloadError
 
 from semble.chunking.chunking import Chunk, chunk_lines, chunk_source
 from semble.chunking.core import ChunkBoundary, _cached_get_parser, chunk
@@ -95,32 +94,31 @@ def test_get_parser(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger="semble.chunking.core"):
         _cached_get_parser("hello")
         assert len(caplog.records) == 1
-        assert "not found" in caplog.records[0].message
+        assert "not bundled" in caplog.records[0].message
         assert "hello" in caplog.records[0].message
 
         caplog.clear()
         _cached_get_parser("hello")
         assert len(caplog.records) == 0
 
-    with patch("semble.chunking.core.get_parser", side_effect=DownloadError):
-        with caplog.at_level(logging.WARNING, logger="semble.chunking.core"):
-            _cached_get_parser("Python")
-            assert len(caplog.records) == 1
-            assert "Failed to download" in caplog.records[0].message
-            assert "Python" in caplog.records[0].message
-
-            caplog.clear()
-            _cached_get_parser("Python")
-            assert len(caplog.records) == 0
-
     with patch("semble.chunking.core.get_parser", side_effect=ValueError):
         with caplog.at_level(logging.WARNING, logger="semble.chunking.core"):
-            _cached_get_parser("Ruby")
+            _cached_get_parser("python")
             assert len(caplog.records) == 1
             assert "Uncaught exception" in caplog.records[0].message
 
             caplog.clear()
-            _cached_get_parser("Ruby")
+            _cached_get_parser("python")
+            assert len(caplog.records) == 0
+
+    with patch("semble.chunking.core.get_parser", side_effect=RuntimeError):
+        with caplog.at_level(logging.WARNING, logger="semble.chunking.core"):
+            _cached_get_parser("ruby")
+            assert len(caplog.records) == 1
+            assert "Uncaught exception" in caplog.records[0].message
+
+            caplog.clear()
+            _cached_get_parser("ruby")
             assert len(caplog.records) == 0
 
 
@@ -132,10 +130,11 @@ def test_chunks_is_none() -> None:
 
 
 def test_download_error() -> None:
-    """Test that chunk returns None when parser is not available."""
-    with patch("semble.chunking.core.get_parser", side_effect=DownloadError):
-        chunks = chunk("x = 1", "python", 10)
-        assert chunks is None
+    """A language absent from the local bundle falls back without calling the language pack."""
+    with patch("semble.chunking.core.get_parser") as get_parser:
+        chunks = chunk("rule = expression", "ebnf", 10)
+    assert chunks is None
+    get_parser.assert_not_called()
 
 
 def test_chunker_deep_string(caplog: pytest.LogCaptureFixture) -> None:

@@ -1,28 +1,31 @@
 [build-system]
-requires = ["setuptools>=64", "setuptools_scm>=8"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "semble"
-description = "Fast and Accurate Code Search for Agents"
+description = "Network-independent Semble distribution for firewalled Linux environments"
 authors = [{name = "Thomas van Dongen", email = "thomasvdongen@proton.me"}, { name = "Stéphan Tulkens", email = "stephantul@gmail.com"}]
+maintainers = [{name = "pszemraj"}]
 readme = { file = "README.md", content-type = "text/markdown" }
 dynamic = ["version"]
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE*"]
 requires-python = ">=3.10"
-keywords = ["code-search", "hybrid-search", "semantic-search", "mcp", "agent", "rag", "embeddings"]
+keywords = ["code-search", "hybrid-search", "semantic-search", "mcp", "agent", "offline", "air-gapped"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries",
-    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Natural Language :: English",
 ]
 dependencies = [
@@ -32,7 +35,7 @@ dependencies = [
     "bm25s>=0.2.0",
     "pathspec>=0.12",
     "tree-sitter>=0.25,<0.26",
-    "tree-sitter-language-pack>=1.0,<1.8.0,!=1.6.3",
+    "tree-sitter-language-pack==1.6.2",  # pinned: bundled grammar .so files match this version's cache layout
     "orjson",
     "questionary>=2.0,<3.0",
 ]
@@ -59,26 +62,32 @@ dev = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/MinishLab/semble"
-"Bug Reports" = "https://github.com/MinishLab/semble/issues"
-"Source" = "https://github.com/MinishLab/semble"
+"Homepage" = "https://github.com/pszemraj/semble-offline"
+"Bug Reports" = "https://github.com/pszemraj/semble-offline/issues"
+"Source" = "https://github.com/pszemraj/semble-offline"
+"Upstream" = "https://github.com/MinishLab/semble"
 
 [project.scripts]
 semble = "semble.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-license-files = ["LICENSE*"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["semble*"]
 
 [tool.setuptools.package-data]
-semble = ["py.typed", "agents/*.md", "agents/*.toml"]
-
-[tool.setuptools_scm]
-# can be empty if no extra settings are needed, presence enables setuptools_scm
+semble = [
+    "py.typed",
+    "agents/*.md",
+    "agents/*.toml",
+    "_bundled/*.json",
+    "_bundled/*.md",
+    "_bundled/LICENSE*",
+    "_bundled/model/*",
+    "_bundled/grammars/*.so",
+]
 
 [tool.setuptools.dynamic]
 version = {attr = "semble.version.__version__"}
@@ -92,7 +101,9 @@ target-version = "py310"
 "tests/**" = ["ANN"]
 "benchmarks/*.py" = ["T20"]
 "src/semble/cli.py" = ["T20", "E501"]
+"src/semble/doctor.py" = ["T20"]
 "src/semble/installer/*.py" = ["T20", "E501"]
+"scripts/*.py" = ["T20"]
 
 [tool.ruff.lint]
 select = [
@@ -132,6 +143,8 @@ require-return-section-when-returning-nothing = false
 python_version = "3.10"
 warn_unused_configs = true
 ignore_missing_imports = true
+# Keep the 3.10 target independent of dependency stubs that may require a newer parser.
+no_site_packages = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -143,6 +156,3 @@ relative_files = true
 [tool.coverage.report]
 skip_covered = true
 exclude_also = ["if __name__ == .__main__.:", "@abstractmethod"]
-
-[tool.uv]
-exclude-newer = "1 week"

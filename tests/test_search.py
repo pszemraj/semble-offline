@@ -134,18 +134,21 @@ def test_sort_top_k() -> None:
 @pytest.mark.parametrize(
     ("model_path", "expected_call_arg", "incomplete_cache"),
     [
-        (None, "minishlab/potion-code-16M-v2", False),  # default model
+        (None, "resolved/default-model", False),  # default: whatever resolve_model_name() returns
         ("some/custom/model", "some/custom/model", False),  # explicit path forwarded
         ("broken/model", "broken/model", True),  # incomplete cache retries through the Hub
     ],
 )
 def test_load_model(model_path: str | None, expected_call_arg: str, incomplete_cache: bool) -> None:
-    """load_model calls from_pretrained with default or custom model path."""
+    """load_model forwards an explicit path, or falls back to resolve_model_name()."""
     fake_model = MagicMock(spec=StaticModel)
     side_effect = [ValueError("Could not find expected model files"), fake_model] if incomplete_cache else None
-    with patch(
-        "semble.index.dense.StaticModel.from_pretrained", return_value=fake_model, side_effect=side_effect
-    ) as mock_fp:
+    with (
+        patch("semble.index.dense.resolve_model_name", return_value="resolved/default-model"),
+        patch(
+            "semble.index.dense.StaticModel.from_pretrained", return_value=fake_model, side_effect=side_effect
+        ) as mock_fp,
+    ):
         result, _ = load_model(model_path)
     assert result is fake_model
     expected_calls = [call(expected_call_arg, force_download=False)]

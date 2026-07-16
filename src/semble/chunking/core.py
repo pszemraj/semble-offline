@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from functools import cache
 from logging import getLogger
 
-from tree_sitter import Node, Parser
-from tree_sitter_language_pack import DownloadError, LanguageNotFoundError, SupportedLanguage, get_parser
+from tree_sitter import Language, Node, Parser
+from tree_sitter_language_pack import LanguageNotFoundError, SupportedLanguage, get_parser
 
+from semble._offline import OfflineAssetError, activate_bundled_grammars, grammar_library_path, grammar_symbol
 from semble.index.files import ALL_LANGUAGES
 
 logger = getLogger(__name__)
@@ -28,15 +29,59 @@ class ChunkBoundary:
     end: int
 
 
+def _parser_from_installed_package(language: str) -> Parser | None:
+    """Build a parser from an individually pip-installed ``tree-sitter-<language>`` wheel.
+
+    Grammar wheels published by the tree-sitter org (e.g. ``tree-sitter-python``)
+    expose a ``language()`` entry point. This requires no network access at
+    runtime and works in firewalled environments where
+    tree-sitter-language-pack's lazy download fails.
+    """
+    from importlib import import_module
+
+    module_name = f"tree_sitter_{grammar_symbol(language)}"
+    try:
+        module = import_module(module_name)
+        return Parser(Language(module.language()))
+    except ModuleNotFoundError:
+        return None
+    except Exception:
+        logger.warning("%s is installed but could not be loaded", module_name, exc_info=True)
+        return None
+
+
 @cache
 def _cached_get_parser(language: SupportedLanguage) -> Parser | None:
-    """Gets a parser from tree_sitter."""
+    """Gets a parser from tree_sitter.
+
+    Resolution order is the local language-pack cache, an individually installed
+    grammar wheel, then line chunking. No runtime download is attempted.
+    """
+    language_name = str(language)
     try:
+        library = grammar_library_path(language_name)
+    except OfflineAssetError as error:
+        fallback = _parser_from_installed_package(language_name)
+        if fallback is not None:
+            return fallback
+        logger.error("Offline grammar assets are unavailable: %s", error)
+        return None
+
+    if library is None:
+        fallback = _parser_from_installed_package(language_name)
+        if fallback is not None:
+            return fallback
+        logger.warning("Language %s is not bundled; falling back to line chunking", language_name)
+        return None
+
+    try:
+        activate_bundled_grammars()
         return get_parser(language)
     except LanguageNotFoundError:
-        logger.warning("Language %s not found, falling back to line chunking", language)
-    except DownloadError:
-        logger.warning("Failed to download language %s, falling back to line chunking", language)
+        fallback = _parser_from_installed_package(language_name)
+        if fallback is not None:
+            return fallback
+        logger.warning("Language %s could not be loaded; falling back to line chunking", language_name)
     except Exception:
         logger.error("Uncaught exception in _cached_get_parser", exc_info=True)
     return None

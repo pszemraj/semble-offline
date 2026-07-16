@@ -21,6 +21,8 @@ def _load_cached(model_path: str) -> StaticModel:
     # Disable HF progress bars since the model is loaded silently in the background during indexing.
     disable_progress_bars()
     try:
+        if Path(model_path).exists():
+            return StaticModel.from_pretrained(model_path, force_download=False)
         try:
             model = StaticModel.from_pretrained(model_path, force_download=False)
         except ValueError:

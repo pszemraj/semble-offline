@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 from semble.types import Chunk, SearchResult
 
 _GIT_URL_SCHEMES = ("https://", "http://", "ssh://", "git://", "git+ssh://", "file://")
 _SCP_GIT_URL_RE = re.compile(r"^[\w.-]+@[\w.-]+:(?!/)")
-DEFAULT_MODEL_NAME = "minishlab/potion-code-16M-v2"
 
 
 def is_git_url(path: str) -> bool:
@@ -57,5 +57,18 @@ def format_results(query: str, results: list[SearchResult], max_snippet_lines: i
 
 
 def resolve_model_name() -> str:
-    """Resolve a model name to a configurable."""
-    return os.environ.get("SEMBLE_MODEL_NAME", DEFAULT_MODEL_NAME)
+    """Resolve the embedding model without silently enabling network access.
+
+    ``SEMBLE_MODEL_NAME`` is an explicit escape hatch for a local path or a model
+    identifier. Without it, the model bundled in this distribution is required.
+    """
+    env_model = os.environ.get("SEMBLE_MODEL_NAME")
+    if env_model:
+        local_model = Path(env_model).expanduser().resolve()
+        if not local_model.is_dir():
+            raise RuntimeError(f"SEMBLE_MODEL_NAME must point to a local model directory: {local_model}")
+        return str(local_model)
+
+    from semble._offline import bundled_model_dir
+
+    return str(bundled_model_dir())
