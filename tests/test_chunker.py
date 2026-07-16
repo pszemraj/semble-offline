@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
+from semble._offline import OfflineAssetError
 from semble.chunking.chunking import Chunk, chunk_lines, chunk_source
 from semble.chunking.core import ChunkBoundary, _cached_get_parser, chunk
 
@@ -129,11 +130,24 @@ def test_chunks_is_none() -> None:
         assert chunks is None
 
 
-def test_download_error() -> None:
+def test_unbundled_language_uses_line_chunking() -> None:
     """A language absent from the local bundle falls back without calling the language pack."""
     with patch("semble.chunking.core.get_parser") as get_parser:
         chunks = chunk("rule = expression", "ebnf", 10)
     assert chunks is None
+    get_parser.assert_not_called()
+
+
+def test_missing_bundle_fails_closed(caplog: pytest.LogCaptureFixture) -> None:
+    """Missing bundled grammars do not fall through to another package or downloader."""
+    with (
+        patch("semble.chunking.core.grammar_library_path", side_effect=OfflineAssetError("missing bundle")),
+        patch("semble.chunking.core.get_parser") as get_parser,
+        caplog.at_level(logging.ERROR, logger="semble.chunking.core"),
+    ):
+        parser = _cached_get_parser("python")
+    assert parser is None
+    assert "missing bundle" in caplog.text
     get_parser.assert_not_called()
 
 

@@ -43,9 +43,9 @@ Reinstall from the release wheel, verify its checksum against the release's `SHA
 
 This is expected. The EBNF grammar in the source language-pack release is GPL-3.0 and is not redistributed here. Other bundled languages use AST-aware chunking.
 
-## A custom model or grammar directory fails
+## A custom model directory fails
 
-`SEMBLE_MODEL_NAME` must be a local model directory. `SEMBLE_TS_CACHE_DIR` must be a local directory containing `libtree_sitter_*.so` files compatible with `tree-sitter-language-pack` 1.6.2. These overrides do not accept remote URLs.
+`SEMBLE_MODEL_NAME` must point to a local model directory. It does not accept a remote model ID or URL. Unset it to return to the model bundled with Semble Offline.
 
 ## Installation works but a remote repository search fails
 

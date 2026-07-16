@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -12,9 +11,6 @@ from typing import Any
 
 _BUNDLED_DIR = Path(__file__).resolve().parent / "_bundled"
 _MANIFEST_PATH = _BUNDLED_DIR / "asset-manifest.json"
-_TS_CACHE_ENV = "SEMBLE_TS_CACHE_DIR"
-
-_active_grammar_dir: Path | None = None
 
 
 class OfflineAssetError(RuntimeError):
@@ -88,40 +84,24 @@ def grammar_symbol(language: str) -> str:
     return str(aliases.get(language, language))
 
 
-def active_grammar_dir() -> Path:
-    """Return the explicit grammar override or the bundled grammar directory."""
-    if override := os.environ.get(_TS_CACHE_ENV):
-        path = Path(override).expanduser().resolve()
-        if not path.is_dir():
-            raise OfflineAssetError(f"{_TS_CACHE_ENV} is not a directory: {path}")
-        return path
-    return bundled_grammar_dir()
-
-
 def grammar_library_path(language: str) -> Path | None:
-    """Return the local grammar library for language, without downloading anything."""
-    directory = active_grammar_dir()
+    """Return the bundled grammar library for language, without downloading anything."""
+    directory = bundled_grammar_dir()
     symbol = grammar_symbol(language)
-    candidates = [directory / f"libtree_sitter_{symbol}.so"]
-    if symbol != language:
-        candidates.append(directory / f"libtree_sitter_{language}.so")
-    return next((path for path in candidates if path.is_file()), None)
+    library = directory / f"libtree_sitter_{symbol}.so"
+    return library if library.is_file() else None
 
 
+@cache
 def activate_bundled_grammars() -> Path:
-    """Configure tree-sitter-language-pack to use an entirely local grammar directory."""
-    global _active_grammar_dir
-    target = active_grammar_dir()
-    if _active_grammar_dir == target:
-        return target
-
+    """Configure tree-sitter-language-pack to use the bundled grammar directory."""
+    target = bundled_grammar_dir()
     try:
         import tree_sitter_language_pack as tslp
 
         tslp.configure(cache_dir=str(target))
     except Exception as error:
         raise OfflineAssetError(f"Cannot configure the offline tree-sitter grammar directory: {target}") from error
-    _active_grammar_dir = target
     return target
 
 

@@ -155,8 +155,8 @@ Two tools were considered but not included in the benchmark:
 Repos are pinned in `repos.json` and cloned into `~/.cache/semble-bench`:
 
 ```bash
-uv run python -m benchmarks.sync_repos          # clone / update
-uv run python -m benchmarks.sync_repos --check  # verify only
+python -m benchmarks.sync_repos          # clone / update
+python -m benchmarks.sync_repos --check  # verify only
 ```
 
 All tools run CPU-only. semble uses `minishlab/potion-code-16M`; CodeRankEmbed uses `nomic-ai/CodeRankEmbed` (137M params). The speed benchmark touches one repo per language with a cold-start index and 5 query runs per repo.
@@ -165,9 +165,9 @@ All tools run CPU-only. semble uses `minishlab/potion-code-16M`; CodeRankEmbed u
 <summary>semble</summary>
 
 ```bash
-uv run python -m benchmarks.run_benchmark
-uv run python -m benchmarks.run_benchmark --repo fastapi --repo axios
-uv run python -m benchmarks.run_benchmark --language python
+python -m benchmarks.run_benchmark
+python -m benchmarks.run_benchmark --repo fastapi --repo axios
+python -m benchmarks.run_benchmark --language python
 ```
 
 Full runs write to `benchmarks/results/semble-hybrid-<sha12>.json`.
@@ -178,7 +178,7 @@ Full runs write to `benchmarks/results/semble-hybrid-<sha12>.json`.
 <summary>Speed benchmark</summary>
 
 ```bash
-uv run python -m benchmarks.speed_benchmark
+python -m benchmarks.speed_benchmark
 ```
 
 Writes to `benchmarks/results/speed-<sha12>.json`.
@@ -189,9 +189,9 @@ Writes to `benchmarks/results/speed-<sha12>.json`.
 <summary>Ablations</summary>
 
 ```bash
-uv run python -m benchmarks.baselines.ablations
-uv run python -m benchmarks.baselines.ablations --mode bm25
-uv run python -m benchmarks.baselines.ablations --mode semble-semantic
+python -m benchmarks.baselines.ablations
+python -m benchmarks.baselines.ablations --mode bm25
+python -m benchmarks.baselines.ablations --mode semble-semantic
 ```
 
 </details>
@@ -202,8 +202,8 @@ uv run python -m benchmarks.baselines.ablations --mode semble-semantic
 Needs `probe` on `$PATH` (`npm install -g @buger/probe`).
 
 ```bash
-uv run python -m benchmarks.baselines.probe
-uv run python -m benchmarks.baselines.probe --repo fastapi --repo axios
+python -m benchmarks.baselines.probe
+python -m benchmarks.baselines.probe --repo fastapi --repo axios
 ```
 
 </details>
@@ -218,14 +218,14 @@ ollama pull nomic-embed-text
 ```
 
 ```bash
-uv run python -m benchmarks.baselines.grepai
-uv run python -m benchmarks.baselines.grepai --repo fastapi --repo axios
+python -m benchmarks.baselines.grepai
+python -m benchmarks.baselines.grepai --repo fastapi --repo axios
 ```
 
 Large repos take several minutes to index. Use `--timeout <seconds>` (default 120) for repos with many files:
 
 ```bash
-uv run python -m benchmarks.baselines.grepai --timeout 1800 --output results.json
+python -m benchmarks.baselines.grepai --timeout 1800 --output results.json
 ```
 
 The `--output` flag enables resume mode: already-completed repos are skipped on restart.
@@ -238,8 +238,8 @@ The `--output` flag enables resume mode: already-completed repos are skipped on 
 Needs `rg` on `$PATH` (`brew install ripgrep` / `apt install ripgrep`).
 
 ```bash
-uv run python -m benchmarks.baselines.ripgrep
-uv run python -m benchmarks.baselines.ripgrep --no-fixed-strings
+python -m benchmarks.baselines.ripgrep
+python -m benchmarks.baselines.ripgrep --no-fixed-strings
 ```
 
 </details>
@@ -250,8 +250,8 @@ uv run python -m benchmarks.baselines.ripgrep --no-fixed-strings
 Needs the `colgrep` binary on `$PATH`.
 
 ```bash
-uv run python -m benchmarks.baselines.colgrep
-uv run python -m benchmarks.baselines.colgrep --repo fastapi --repo axios
+python -m benchmarks.baselines.colgrep
+python -m benchmarks.baselines.colgrep --repo fastapi --repo axios
 ```
 
 Runs with `--code-only` everywhere except bash repos (bash-it, bats-core, nvm), which use `--no-code-only` because ColGREP's code filter excludes `.sh`/`.bash` files.
@@ -261,11 +261,11 @@ Runs with `--code-only` everywhere except bash repos (bash-it, bats-core, nvm), 
 <details>
 <summary>CodeRankEmbed</summary>
 
-Requires the `benchmark` extra (`uv sync --extra benchmark`).
+Requires the `benchmark` extra (`python -m pip install -e ".[benchmark]"`).
 
 ```bash
-uv run python -m benchmarks.baselines.coderankembed
-uv run python -m benchmarks.baselines.coderankembed --mode semantic
+python -m benchmarks.baselines.coderankembed
+python -m benchmarks.baselines.coderankembed --mode semantic
 ```
 
 </details>
@@ -273,15 +273,15 @@ uv run python -m benchmarks.baselines.coderankembed --mode semantic
 <details>
 <summary>Context-efficiency benchmark</summary>
 
-Requires the `benchmark` extra (`uv sync --extra benchmark`) and `rg` on `$PATH`.
+Requires the `benchmark` extra (`python -m pip install -e ".[benchmark]"`) and `rg` on `$PATH`.
 
 ```bash
 # Recall vs. token-budget across all queries; plots automatically.
-uv run python -m benchmarks.token_efficiency recall
-uv run python -m benchmarks.token_efficiency recall --repo fastapi
+python -m benchmarks.token_efficiency recall
+python -m benchmarks.token_efficiency recall --repo fastapi
 
 # Regenerate the plot from a saved recall payload.
-uv run python -m benchmarks.token_efficiency plot
+python -m benchmarks.token_efficiency plot
 ```
 
 Writes `benchmarks/results/token-efficiency-<sha12>.json` and `assets/images/token_efficiency.png`.
@@ -292,7 +292,7 @@ Writes `benchmarks/results/token-efficiency-<sha12>.json` and `assets/images/tok
 <summary>Plots</summary>
 
 ```bash
-uv run python -m benchmarks.plot
+python -m benchmarks.plot
 ```
 
 Writes `speed_vs_ndcg_cold.png` and `speed_vs_ndcg_warm.png` to `assets/images/`.

@@ -100,7 +100,7 @@ Use Semble to discover relevant code by behavior. Use an exact-text tool when yo
 - 264 tree-sitter grammar libraries from `tree-sitter-language-pack` 1.6.2 are bundled and loaded from the package.
 - The GPL-3.0 EBNF grammar is deliberately excluded; `.ebnf` files use Semble's line chunker.
 - Missing or corrupt bundled assets produce a clear error instead of silently falling through to a network download.
-- `SEMBLE_MODEL_NAME` may point to a different local model directory, and `SEMBLE_TS_CACHE_DIR` may point to a different local grammar directory.
+- `SEMBLE_MODEL_NAME` may point to a different local model directory.
 - Supplying a remote Git URL to `semble search` is an explicit request to clone that repository and therefore requires network access. Searching local paths does not.
 
 See [provenance](docs/provenance.md) for exact revisions, hashes, licenses, and the upstream base.

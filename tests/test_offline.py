@@ -1,9 +1,6 @@
-from pathlib import Path
-
 import pytest
 
 from semble._offline import (
-    OfflineAssetError,
     bundled_grammar_dir,
     bundled_model_dir,
     grammar_library_path,
@@ -53,10 +50,3 @@ def test_default_model_is_bundled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SEMBLE_MODEL_NAME", "/definitely/not/a/local/model")
     with pytest.raises(RuntimeError, match="local model directory"):
         resolve_model_name()
-
-
-def test_invalid_grammar_override_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A bad explicit grammar override fails instead of falling through to a downloader cache."""
-    monkeypatch.setenv("SEMBLE_TS_CACHE_DIR", str(tmp_path / "missing"))
-    with pytest.raises(OfflineAssetError, match="not a directory"):
-        grammar_library_path("python")
