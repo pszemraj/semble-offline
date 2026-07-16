@@ -1,79 +1,53 @@
-# Contributing to semble
+# Contributing
 
-Thanks for your interest in semble. This document explains how contributions work and what we expect.
+Semble Offline is a narrow Linux distribution layer over upstream [MinishLab/semble](https://github.com/MinishLab/semble). Contributions should improve installation, offline reliability, asset provenance, Linux wheel quality, or compatibility with a newer upstream release. General search features and cross-platform support usually belong upstream.
 
-## tl;dr
+Open an issue before starting a large change so the scope and upstream destination are clear. Small bug fixes and documentation corrections can go directly to a focused pull request.
 
-- **Every PR must link to an existing issue.** Open an issue to discuss before writing code, then link it from your PR (e.g. `Closes #123`).
-- **AI-generated PRs** will be closed without review if they weren't discussed beforehand.
+## Development setup
 
----
+Activate your development environment, then install the project and its development dependencies:
 
-## Discuss before building
+```bash
+python -m pip install -e ".[dev,mcp]"
+```
 
-Our libraries are small and focused by design. We care a lot about keeping it that way. Before you invest time writing code, please open an issue describing:
+The project does not prescribe an environment manager. Development commands use the interpreter from the active environment.
 
-- What problem you're solving
-- Why it belongs in semble (as opposed to a wrapper or separate tool)
-- What API or behaviour change it would involve, if any
-- A minimal (code) example of how it would work
+## Checks
 
-This applies to small PRs (e.g. bug fixes and documentation updates) as well.  A quick issue lets us confirm the fix is wanted and aligned with how we'd want to solve it, so you don't waste time on a PR we'd need to reject or rework.
+Run the complete local check set:
 
-**PRs without a linked issue will be closed.**
+```bash
+make check
+```
 
-## What we generally welcome
+The individual commands are:
 
-- Bug fixes (with a linked issue and a test that reproduces the issue)
-- Documentation improvements and example fixes (with a linked issue)
+```bash
+python -m pytest
+python -m ruff check src tests scripts setup.py
+python -m ruff format --check src tests scripts setup.py
+pydoclint src
+python -m mypy src
+```
 
-## What we generally won't accept
+Changes to bundled assets or packaging must also build and inspect the wheel:
 
-- Large new features that haven't been discussed
-- Features that significantly expand the scope of the library
-- Dependency additions
-- AI-generated code dumps with no context or discussion
+```bash
+python -m pip install build auditwheel
+python -m build --wheel
+python scripts/verify_wheel.py dist/semble-0.5.1+offline.1-py3-none-manylinux_2_34_x86_64.whl
+python -m auditwheel show dist/semble-0.5.1+offline.1-py3-none-manylinux_2_34_x86_64.whl
+```
 
-## Opening a good issue
+## Pull requests
 
-If you found a bug, include:
-- semble version (`pip show semble`)
-- Python version
-- A minimal reproducible example
-- What you expected vs. what happened
+- Keep each change focused and explain whether it is fork-specific or suitable for upstream.
+- Add tests for behavior changes and update user-facing documentation when commands or guarantees change.
+- Do not add automatic runtime downloads. Explicit user requests such as searching a remote Git URL are a separate concern.
+- Preserve the Linux x86_64 and glibc 2.34 support statement unless a fully built, tested, and distributable replacement is included.
+- Do not commit generated wheels, archives, caches, or local environments.
+- Do not publish packages, push tags, or create releases as part of an ordinary pull request.
 
-If you want a feature, include the things listed under "Discuss before building" above.
-
-## Pull request checklist
-
-Before opening a PR:
-
-- [ ] Link to an existing issue (e.g. `Closes #123`). PRs without one will be closed
-- [ ] Run `make test` and confirm all tests pass
-- [ ] Run `make lint` and `make typecheck`
-- [ ] Run `make fix` to auto-fix any lint issues
-- [ ] If you added behaviour, add or update tests
-- [ ] If you changed a public API, update the docstrings
-- [ ] Keep the diff focused (one logical change per PR)
-
-You can also run `make pre-commit` to run all checks at once.
-
-## Code style
-
-- We use `ruff` for formatting and linting
-- We use `mypy` for type checking and expect all new code to be fully typed
-- Keep things simple; we prefer readable over clever
-
-## A note on AI-assisted contributions
-
-We don't have a blanket policy against AI tools (we also use them ourselves). But we do expect:
-
-1. **You understand what you're submitting.** If you ran an agent against the repo and opened a PR with the output, you should be able to explain what it does.
-2. **The contribution was discussed first.** An AI generating code for an agreed-on, well-scoped issue is fine. An AI inventing features and opening a PR is not.
-3. **Tests and quality are your responsibility.** "The AI wrote it" is not a substitute for correctness.
-
-PRs that appear to be unreviewed AI output (large scope, multiple unrelated files touched, no prior discussion, new deps) will be closed with a pointer to this document.
-
----
-
-Questions? Open an issue.
+When a change is broadly useful to upstream Semble, prefer a small standalone commit that can be shared or cherry-picked there.

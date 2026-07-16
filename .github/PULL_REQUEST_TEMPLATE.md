@@ -2,7 +2,7 @@
 
 Closes #
 
-<!-- Every PR must link to an existing issue. PRs without a linked issue will be closed. See CONTRIBUTING.md. -->
+<!-- Link an issue when one exists or when the change was discussed in advance. -->
 
 ## Summary
 
@@ -11,8 +11,7 @@ Closes #
 ## Checklist
 
 - [ ] I have read [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md)
-- [ ] This PR is linked to an existing issue (above)
-- [ ] `make test` passes
-- [ ] `make lint` and `make typecheck` pass (or `make pre-commit`)
+- [ ] `make check` passes
 - [ ] Added or updated tests for any behaviour changes
 - [ ] Updated docstrings / docs for any public API changes
+- [ ] Packaging changes pass `make build` and `make verify-wheel`

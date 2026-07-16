@@ -1,6 +1,6 @@
 cff-version: 1.2.0
-message: "If you use Semble in your research, please cite it as below."
-title: "Semble: Fast and Accurate Code Search for Agents"
+message: "Semble Offline is a distribution of Semble. Please cite the upstream Semble project as below."
+title: "Semble Offline"
 authors:
   - family-names: "van Dongen"
     given-names: "Thomas"
@@ -8,9 +8,10 @@ authors:
     given-names: "Stephan"
 doi: 10.5281/zenodo.19785932
 license: MIT
-url: "https://github.com/MinishLab/semble"
-repository-code: "https://github.com/MinishLab/semble"
-date-released: "2026-04-26"
+version: "0.5.1+offline.1"
+url: "https://github.com/pszemraj/semble-offline"
+repository-code: "https://github.com/pszemraj/semble-offline"
+date-released: "2026-07-16"
 
 preferred-citation:
   type: software

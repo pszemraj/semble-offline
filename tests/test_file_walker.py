@@ -16,7 +16,7 @@ def _touch(path: Path, content: str = "x = 1\n") -> None:
     [
         # Default-ignored dirs (.venv, node_modules, .cache) are always skipped.
         (
-            ["src/a.py", ".venv/lib/b.py", "node_modules/pkg/c.py", ".cache/uv/d.py"],
+            ["src/a.py", ".venv/lib/b.py", "node_modules/pkg/c.py", ".cache/tool/d.py"],
             None,
             None,
             {"src/a.py"},
