@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 _HOME = Path.home()
+_PYTHON_EXECUTABLE = str(Path(sys.executable).resolve())
 
 Action = Literal["created", "updated", "unchanged", "not-found", "removed", "error", "skipped"]
 Mode = Literal["install", "uninstall"]
@@ -26,26 +27,26 @@ SEMBLE_START = "<!-- SEMBLE_START -->"
 SEMBLE_END = "<!-- SEMBLE_END -->"
 
 _STDIO_SERVER_CONFIG: dict[str, object] = {
-    "command": "uvx",
-    "args": ["--from", "semble[mcp]", "semble"],
+    "command": _PYTHON_EXECUTABLE,
+    "args": ["-m", "semble"],
     "type": "stdio",
 }
 
 _OPENCODE_SERVER_CONFIG: dict[str, object] = {
-    "command": ["uvx", "--from", "semble[mcp]", "semble"],
+    "command": [_PYTHON_EXECUTABLE, "-m", "semble"],
     "type": "local",  # opencode uses "local"/"remote", not "stdio"
     "enabled": True,
 }
 
 _BARE_STDIO_SERVER_CONFIG: dict[str, object] = {  # Windsurf: command/args only, no "type"
-    "command": "uvx",
-    "args": ["--from", "semble[mcp]", "semble"],
+    "command": _PYTHON_EXECUTABLE,
+    "args": ["-m", "semble"],
 }
 
 _ZED_SERVER_CONFIG: dict[str, object] = {  # Zed requires "source": "custom" for manual servers
     "source": "custom",
-    "command": "uvx",
-    "args": ["--from", "semble[mcp]", "semble"],
+    "command": _PYTHON_EXECUTABLE,
+    "args": ["-m", "semble"],
 }
 
 INSTRUCTIONS = f"""\
@@ -70,7 +71,7 @@ semble find-related src/auth.py 42 ./my-project
 semble search "save model to disk" ./my-project --top-k 10
 ```
 
-The index is built on first run and cached automatically. If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble`.
+The index is built on first run and cached automatically. If `semble` is not on `$PATH`, use `python -m semble` from the environment where it is installed.
 
 ### Workflow
 

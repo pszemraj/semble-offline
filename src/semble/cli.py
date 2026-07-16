@@ -17,8 +17,11 @@ from semble.installer.agents import AGENTS, IntegrationType
 from semble.stats import format_savings_report
 from semble.types import ContentType
 from semble.utils import format_results, is_git_url, resolve_chunk
+from semble.version import __version__
 
-_CLI_DISPATCH_ARGS = frozenset({"search", "find-related", "install", "uninstall", "savings", "-h", "--help", "clear"})
+_CLI_DISPATCH_ARGS = frozenset(
+    {"search", "find-related", "install", "uninstall", "savings", "doctor", "-h", "--help", "-V", "--version", "clear"}
+)
 _CLEAR_CHOICE = Literal["all", "index", "savings"]
 
 _SHA_256_REGEX = re.compile(r"^[a-f0-9]{64}$")
@@ -76,7 +79,10 @@ def _mcp_main() -> None:
     _add_content_args(parser)
     args = parser.parse_args()
     if any(find_spec(dep) is None for dep in get_package_extras("semble", "mcp")):
-        print("MCP dependencies are not installed. Run: pip install 'semble[mcp]'", file=sys.stderr)
+        print(
+            "MCP dependencies are not installed. Reinstall Semble Offline with the [mcp] extra from the same wheel or Git URL.",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
     from semble.mcp import serve
 
@@ -165,7 +171,10 @@ def _run_clear(clear_type: _CLEAR_CHOICE) -> None:
 
 
 def _cli_main() -> None:
-    parser = argparse.ArgumentParser(prog="semble")
+    parser = argparse.ArgumentParser(
+        prog="semble", description="Local hybrid code search for network-restricted Linux systems."
+    )
+    parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command")
 
     search_p = sub.add_parser("search", help="Search a codebase.")
@@ -200,6 +209,9 @@ def _cli_main() -> None:
 
     sub.add_parser("savings", help="Show token savings and usage stats.")
 
+    doctor_p = sub.add_parser("doctor", help="Check the offline installation and bundled assets.")
+    doctor_p.add_argument("--full", action="store_true", help="Hash every asset and exercise aliases and the model.")
+
     install_p = sub.add_parser("install", help="Configure semble across coding agents.")
     uninstall_p = sub.add_parser("uninstall", help="Remove semble configuration from coding agents.")
     for p, verb in ((install_p, "configure"), (uninstall_p, "remove configuration from")):
@@ -226,7 +238,12 @@ def _cli_main() -> None:
 
     args = parser.parse_args()
 
-    if args.command == "savings":
+    if args.command == "doctor":
+        from semble.doctor import run_doctor
+
+        if not run_doctor(full=args.full):
+            raise SystemExit(1)
+    elif args.command == "savings":
         print(format_savings_report())
     elif args.command in ("install", "uninstall"):
         if args.type and not args.agent:
@@ -255,3 +272,5 @@ def _cli_main() -> None:
             _resolve_content(args.content, args.include_text_files),
             args.max_snippet_lines,
         )
+    else:
+        parser.print_help()

@@ -3,10 +3,12 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from importlib.resources import files
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Callable, NoReturn, Sequence, TypeVar
 
 import questionary
+from model2vec.utils import get_package_extras
 
 from semble.installer.agents import (
     AGENTS,
@@ -220,6 +222,14 @@ def run(
         ) or _exit("Nothing selected. Exiting.")
 
     _print_plan(chosen_agents, chosen_integrations)
+
+    if install and any(integration.id is IntegrationType.MCP for integration in chosen_integrations):
+        missing = [name for name in get_package_extras("semble", "mcp") if find_spec(name) is None]
+        if missing:
+            print(
+                "  Warning: the optional MCP dependencies are not installed. Reinstall Semble Offline with the "
+                "[mcp] extra from the same wheel or Git URL before starting your agent.\n"
+            )
 
     if not yes:
         question = "Proceed?" if install else "Remove semble configuration?"

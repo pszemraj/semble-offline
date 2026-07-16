@@ -1,6 +1,7 @@
 import json
 import sys
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -71,6 +72,8 @@ def test_merge_mcp_creates_fresh_file(claude_agent):
     assert merge_mcp(claude_agent).action == "created"
     data = json.loads(claude_agent.mcp.path.read_text())
     assert data["mcpServers"]["semble"] == _STDIO_SERVER_CONFIG
+    assert Path(data["mcpServers"]["semble"]["command"]).resolve() == Path(sys.executable).resolve()
+    assert data["mcpServers"]["semble"]["args"] == ["-m", "semble"]
 
 
 def test_merge_mcp_preserves_comments_and_other_entries(claude_agent):
@@ -167,9 +170,9 @@ def test_merge_mcp_writes_under_agent_key(tmp_path, agent_id, key):
 
 
 def test_mcp_skipped_when_grammar_unavailable(claude_agent, monkeypatch):
-    """When the JSON5 grammar cannot be downloaded, merge/remove return 'skipped'."""
+    """When the bundled JSON5 grammar cannot load, merge/remove return 'skipped' without downloading."""
     claude_agent.mcp.path.write_text('{ "mcpServers": {} }')
-    monkeypatch.setattr("semble.installer.config.download", lambda _: 1 / 0)
+    monkeypatch.setattr("semble.installer.config.get_parser", lambda _: 1 / 0)
     monkeypatch.setattr("semble.installer.config._json5_parser_cache", False)
     assert merge_mcp(claude_agent).action == "skipped"
     assert remove_mcp(claude_agent).action == "skipped"
@@ -188,7 +191,7 @@ def test_remove_mcp_preserves_comments(claude_agent):
         "{\n"
         "  // my servers\n"
         '  "mcpServers": {\n'
-        '    "semble": {"command": "uvx"},\n'
+        '    "semble": {"command": "old-runner"},\n'
         '    "other": {"command": "x"}\n'
         "  }\n"
         "}\n"
@@ -242,6 +245,8 @@ def test_codex_toml_merge_and_remove(tmp_path):
     assert _CODEX_MCP_HEADER in text
     assert 'model = "gpt-5"' in text
     assert "[mcp_servers.other]" in text
+    assert str(Path(sys.executable).resolve()) in text
+    assert 'args = ["-m", "semble"]' in text
     assert merge_toml_block(f) == "unchanged"  # idempotent
 
     assert remove_toml_block(f) == "removed"
@@ -280,13 +285,13 @@ def test_remove_toml_deletes_file_when_only_semble(tmp_path):
 
 
 _SUB_AFTER = (
-    '[mcp_servers.semble]\ncommand = "uvx"\n\n'
+    '[mcp_servers.semble]\ncommand = "old-runner"\n\n'
     '[mcp_servers.semble.tools.search]\napproval_mode = "approve"\n\n'
     '[other]\nkey = "val"\n'
 )
 _SUB_BEFORE = (
     '[mcp_servers.semble.tools.search]\napproval_mode = "approve"\n\n'
-    '[mcp_servers.semble]\ncommand = "uvx"\n\n'
+    '[mcp_servers.semble]\ncommand = "old-runner"\n\n'
     '[other]\nkey = "val"\n'
 )
 

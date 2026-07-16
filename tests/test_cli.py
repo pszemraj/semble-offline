@@ -145,7 +145,24 @@ def test_mcp_main_exits_with_message_when_extras_missing(
         with pytest.raises(SystemExit) as exc_info:
             main()
     assert exc_info.value.code == 1
-    assert "pip install 'semble[mcp]'" in capsys.readouterr().err
+    assert "same wheel or Git URL" in capsys.readouterr().err
+
+
+def test_version_flag(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """--version reports the offline distribution version without starting MCP."""
+    monkeypatch.setattr(sys, "argv", ["semble", "--version"])
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+    assert "0.5.1+offline.1" in capsys.readouterr().out
+
+
+def test_doctor_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Doctor dispatches to the installation diagnostics."""
+    monkeypatch.setattr(sys, "argv", ["semble", "doctor", "--full"])
+    with patch("semble.doctor.run_doctor", return_value=True) as doctor:
+        main()
+    doctor.assert_called_once_with(full=True)
 
 
 @pytest.mark.parametrize(
