@@ -138,7 +138,12 @@ def _compiler_provenance() -> dict[str, str]:
         "c_compiler": _output(cc, "--version").splitlines()[0],
         "cxx_compiler": _output(cxx, "--version").splitlines()[0],
     }
-    sysroot = _output(cxx, "-print-sysroot")
+    sysroot = os.environ.get("SDKROOT") or os.environ.get("CONDA_BUILD_SYSROOT", "")
+    if not sysroot:
+        command = ("xcrun", "--show-sdk-path") if sys.platform == "darwin" else (cxx, "-print-sysroot")
+        result = subprocess.run(command, check=False, capture_output=True, text=True)
+        if result.returncode == 0:
+            sysroot = result.stdout.strip()
     if sysroot:
         provenance["compiler_sysroot"] = sysroot
     return provenance
