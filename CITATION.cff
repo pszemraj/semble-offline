@@ -8,10 +8,10 @@ authors:
     given-names: "Stephan"
 doi: 10.5281/zenodo.19785932
 license: MIT
-version: "0.5.1+offline.1"
+version: "0.5.1+offline.2"
 url: "https://github.com/pszemraj/semble-offline"
 repository-code: "https://github.com/pszemraj/semble-offline"
-date-released: "2026-07-16"
+date-released: "2026-07-17"
 
 preferred-citation:
   type: software

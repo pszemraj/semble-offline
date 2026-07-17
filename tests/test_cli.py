@@ -145,7 +145,7 @@ def test_mcp_main_exits_with_message_when_extras_missing(
         with pytest.raises(SystemExit) as exc_info:
             main()
     assert exc_info.value.code == 1
-    assert "same wheel or Git URL" in capsys.readouterr().err
+    assert "same release wheel" in capsys.readouterr().err
 
 
 def test_version_flag(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

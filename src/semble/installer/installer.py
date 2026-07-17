@@ -228,7 +228,7 @@ def run(
         if missing:
             print(
                 "  Warning: the optional MCP dependencies are not installed. Reinstall Semble Offline with the "
-                "[mcp] extra from the same wheel or Git URL before starting your agent.\n"
+                "[mcp] extra from the same release wheel before starting your agent.\n"
             )
 
     if not yes:
