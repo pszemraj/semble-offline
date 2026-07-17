@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the checked-in provenance and integrity metadata for bundled assets."""
+"""Generate checked-in Linux provenance and integrity metadata for bundled assets."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = ROOT / "src" / "semble" / "_bundled"
 GRAMMARS = BUNDLE / "grammars"
 MODEL = BUNDLE / "model"
+LINKER_PATCH = ROOT / "scripts" / "patches" / "tree-sitter-language-pack-cxx-linker.patch"
 
 UPSTREAM_REPOSITORY = "https://github.com/MinishLab/semble"
 UPSTREAM_COMMIT = "f4c397e2ede0c16ab1772adeee9a0af1024043bf"
@@ -20,11 +21,13 @@ MODEL_REPOSITORY = "https://huggingface.co/minishlab/potion-code-16M-v2"
 MODEL_REVISION = "e9d2a44ca6a05ac6685f3b23709ea57eb7352d5b"
 GRAMMAR_PACKAGE = "tree-sitter-language-pack"
 GRAMMAR_VERSION = "1.6.2"
+LANGUAGE_PACK_COMMIT = "6bb9761028dfc3a72329d15f0f339ec7ccb56159"
 GRAMMAR_ARCHIVE_URL = (
     "https://github.com/kreuzberg-dev/tree-sitter-language-pack/releases/download/v1.6.2/parsers-linux-x86_64.tar.zst"
 )
 GRAMMAR_ARCHIVE_SHA256 = "5b5a4d2d5319b7d2fae6c7a87e8bf8618c6c827842dba7641a93693980e6b5ea"
 GRAMMAR_ARCHIVE_SIZE = 19_134_009
+REBUILT_CXX_GRAMMARS = ["mojo", "nim", "norg", "wolfram"]
 
 
 def _sha256(path: Path) -> str:
@@ -91,7 +94,7 @@ def main() -> None:
         raise RuntimeError("EBNF must not be bundled because its grammar is GPL-3.0")
 
     manifest = {
-        "format_version": 1,
+        "format_version": 2,
         "grammars": {
             "aliases": {
                 "csharp": "c_sharp",
@@ -99,13 +102,29 @@ def main() -> None:
                 "nushell": "nu",
                 "vb": "vb_dotnet",
             },
-            "archive_sha256": GRAMMAR_ARCHIVE_SHA256,
-            "archive_size": GRAMMAR_ARCHIVE_SIZE,
-            "archive_url": GRAMMAR_ARCHIVE_URL,
             "excluded": {"ebnf": "Excluded because the v1.6.2 grammar is GPL-3.0; .ebnf files use line chunking."},
             "expected_count": 264,
             "files": grammar_files,
             "package": GRAMMAR_PACKAGE,
+            "provenance": {
+                "base": {
+                    "archive_sha256": GRAMMAR_ARCHIVE_SHA256,
+                    "archive_size": GRAMMAR_ARCHIVE_SIZE,
+                    "archive_url": GRAMMAR_ARCHIVE_URL,
+                    "kind": "release-archive",
+                },
+                "rebuilt": {
+                    "c_compiler": "x86_64-conda-linux-gnu-cc (conda-forge gcc 11.4.0-13) 11.4.0",
+                    "compiler_sysroot": "sysroot_linux-64 2.17",
+                    "cxx_compiler": "x86_64-conda-linux-gnu-c++ (conda-forge gcc 11.4.0-13) 11.4.0",
+                    "kind": "source-build",
+                    "language_pack_commit": LANGUAGE_PACK_COMMIT,
+                    "libraries": [f"libtree_sitter_{name}.so" for name in REBUILT_CXX_GRAMMARS],
+                    "linker_patch_sha256": _sha256(LINKER_PATCH),
+                    "rust_toolchain": "1.91",
+                    "tree_sitter_cli": "0.26.8",
+                },
+            },
             "version": GRAMMAR_VERSION,
         },
         "model": {
@@ -115,7 +134,8 @@ def main() -> None:
         },
         "platform": {
             "architecture": "x86_64",
-            "glibc_minimum": "2.34",
+            "library_suffix": ".so",
+            "minimum_version": {"kind": "glibc", "value": "2.34"},
             "operating_system": "linux",
             "wheel_tag": "manylinux_2_34_x86_64",
         },

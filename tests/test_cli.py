@@ -154,7 +154,7 @@ def test_version_flag(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFix
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 0
-    assert "0.5.1+offline.1" in capsys.readouterr().out
+    assert "0.5.1+offline.2" in capsys.readouterr().out
 
 
 def test_doctor_command(monkeypatch: pytest.MonkeyPatch) -> None:

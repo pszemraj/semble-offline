@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "semble"
-description = "Network-independent Semble distribution for firewalled Linux environments"
+description = "Network-independent Semble distribution for firewalled Linux and macOS environments"
 authors = [{name = "Thomas van Dongen", email = "thomasvdongen@proton.me"}, { name = "Stéphan Tulkens", email = "stephantul@gmail.com"}]
 maintainers = [{name = "pszemraj"}]
 readme = { file = "README.md", content-type = "text/markdown" }
@@ -20,6 +20,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -87,6 +88,7 @@ semble = [
     "_bundled/LICENSE*",
     "_bundled/model/*",
     "_bundled/grammars/*.so",
+    "_bundled/grammars/*.dylib",
 ]
 
 [tool.setuptools.dynamic]
