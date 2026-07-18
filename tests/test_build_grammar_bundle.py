@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from scripts import build_grammar_bundle
@@ -67,3 +69,25 @@ def test_compiler_provenance_uses_xcrun_on_macos(monkeypatch: pytest.MonkeyPatch
 
     assert calls == [("xcrun", "--show-sdk-path")]
     assert provenance["compiler_sysroot"] == "/Applications/Xcode.app/SDKs/MacOSX.sdk"
+
+
+def test_language_pack_checkout_applies_all_patches(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The source checkout applies both the linker and pinned-revision fixes."""
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str, **kwargs: object) -> None:
+        commands.append(args)
+
+    monkeypatch.setattr(build_grammar_bundle, "_run", fake_run)
+    monkeypatch.setattr(
+        build_grammar_bundle, "_output", lambda *args, **kwargs: build_grammar_bundle.LANGUAGE_PACK_COMMIT
+    )
+
+    build_grammar_bundle._clone_language_pack(tmp_path)
+
+    applied = [
+        command[-1]
+        for command in commands
+        if command[:3] == ("git", "apply", "--unidiff-zero") and "--check" not in command
+    ]
+    assert applied == [str(patch) for patch in build_grammar_bundle.LANGUAGE_PACK_PATCHES]

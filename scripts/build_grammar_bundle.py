@@ -19,7 +19,9 @@ ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = ROOT / "src" / "semble" / "_bundled"
 GRAMMAR_SOURCES = BUNDLE / "grammar-sources.json"
 BASE_MANIFEST = BUNDLE / "asset-manifest.json"
-LINKER_PATCH = ROOT / "scripts" / "patches" / "tree-sitter-language-pack-cxx-linker.patch"
+CXX_LINKER_PATCH = ROOT / "scripts" / "patches" / "tree-sitter-language-pack-cxx-linker.patch"
+PINNED_REVISIONS_PATCH = ROOT / "scripts" / "patches" / "tree-sitter-language-pack-pinned-revisions.patch"
+LANGUAGE_PACK_PATCHES = (CXX_LINKER_PATCH, PINNED_REVISIONS_PATCH)
 
 LANGUAGE_PACK_REPOSITORY = "https://github.com/kreuzberg-dev/tree-sitter-language-pack"
 LANGUAGE_PACK_VERSION = "1.6.2"
@@ -155,8 +157,9 @@ def _clone_language_pack(checkout: Path) -> None:
     _run("git", "checkout", "--detach", LANGUAGE_PACK_COMMIT, cwd=checkout)
     if _output("git", "rev-parse", "HEAD", cwd=checkout) != LANGUAGE_PACK_COMMIT:
         raise RuntimeError("Language-pack checkout did not resolve to the pinned commit")
-    _run("git", "apply", "--unidiff-zero", "--check", str(LINKER_PATCH), cwd=checkout)
-    _run("git", "apply", "--unidiff-zero", str(LINKER_PATCH), cwd=checkout)
+    for patch in LANGUAGE_PACK_PATCHES:
+        _run("git", "apply", "--unidiff-zero", "--check", str(patch), cwd=checkout)
+        _run("git", "apply", "--unidiff-zero", str(patch), cwd=checkout)
 
 
 def _write_filtered_definitions(checkout: Path, definitions: dict[str, Any]) -> None:
@@ -244,9 +247,10 @@ def _stage_bundle(
                 **_compiler_provenance(),
                 "kind": "source-build",
                 "language_pack_commit": LANGUAGE_PACK_COMMIT,
-                "linker_patch_sha256": _sha256(LINKER_PATCH),
+                "linker_patch_sha256": _sha256(CXX_LINKER_PATCH),
                 "rust_toolchain": RUST_TOOLCHAIN,
                 "tree_sitter_cli": TREE_SITTER_CLI_VERSION,
+                "vendor_fetch_patch_sha256": _sha256(PINNED_REVISIONS_PATCH),
             },
             "version": LANGUAGE_PACK_VERSION,
         },

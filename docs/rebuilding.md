@@ -40,7 +40,7 @@ The verifier checks every Mach-O header and deployment target. The release workf
 
 ## Bundle builder behavior
 
-`scripts/build_grammar_bundle.py` checks out `tree-sitter-language-pack` commit `6bb9761028dfc3a72329d15f0f339ec7ccb56159`, validates its repository, revision, library symbol, and license data against the checked-in 264-source manifest, applies the tracked C++ linker patch, and compiles only the selected sources. `--grammar NAME` can be repeated for a targeted native rebuild; omitting it builds all 264 grammars. The output contains `grammars/`, a platform manifest, and a platform-adjusted `grammar-sources.json`.
+`scripts/build_grammar_bundle.py` checks out `tree-sitter-language-pack` commit `6bb9761028dfc3a72329d15f0f339ec7ccb56159`, validates its repository, revision, library symbol, and license data against the checked-in 264-source manifest, applies the tracked C++ linker and exact-revision fetch patches, and compiles only the selected sources. `--grammar NAME` can be repeated for a targeted native rebuild; omitting it builds all 264 grammars. The output contains `grammars/`, a platform manifest, and a platform-adjusted `grammar-sources.json`.
 
 The four corrected Linux C++ grammars were built with conda-forge GCC 11.4 and `sysroot_linux-64` 2.17. Any replacement must retain a compatibility floor no newer than the wheel tag and pass `auditwheel` before its hashes are regenerated.
 

@@ -1,0 +1,13 @@
+diff --git a/scripts/clone_vendors.py b/scripts/clone_vendors.py
+--- a/scripts/clone_vendors.py
++++ b/scripts/clone_vendors.py
+@@ -12,1 +12,1 @@ from anyio.to_thread import run_sync
+-from git import Repo
++from git import GitCommandError, Repo
+@@ -171,1 +171,5 @@ async def clone_repository(repo_url: str, branch: str | None, language_name: str
+-            await run_sync(lambda: repo.git.checkout(rev))
++            try:
++                await run_sync(lambda: repo.git.checkout(rev))
++            except GitCommandError:
++                await run_sync(lambda: repo.git.fetch("origin", rev, depth=1))
++                await run_sync(lambda: repo.git.checkout(rev))
