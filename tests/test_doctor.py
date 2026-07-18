@@ -60,8 +60,38 @@ def test_platform_checks_report_unreadable_manifest() -> None:
     assert platform_check.detail == "cannot read asset manifest"
 
 
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        {"format_version": 2},
+        {"format_version": 2, "platform": []},
+        {
+            "format_version": 2,
+            "platform": {"operating_system": "linux", "architecture": "x86_64", "minimum_version": []},
+        },
+    ],
+)
+def test_platform_checks_report_malformed_manifest(manifest: dict) -> None:
+    """Malformed platform metadata becomes a failed diagnostic check."""
+    checks = _platform_checks(manifest)
+    platform_check = next(check for check in checks if check.name == "wheel platform")
+    assert not platform_check.ok
+    assert platform_check.detail == "Asset manifest has no valid platform requirements"
+
+
 def test_full_parser_checks_report_unreadable_source_manifest() -> None:
     """An unreadable grammar source manifest becomes a failed diagnostic check."""
     with patch("semble.doctor.bundled_grammar_languages", side_effect=OfflineAssetError("cannot read grammar sources")):
         checks = _parser_checks(full=True)
     assert checks == [AssetCheck("all grammar parsers", False, "cannot read grammar sources")]
+
+
+def test_full_parser_checks_report_omitted_failure_count() -> None:
+    """A broad parser failure reports how many details were omitted."""
+    languages = [f"language_{index}" for index in range(10)]
+    with (
+        patch("semble.doctor.bundled_grammar_languages", return_value=languages),
+        patch("semble.chunking.core._cached_get_parser", return_value=None),
+    ):
+        checks = _parser_checks(full=True)
+    assert checks[0].detail.endswith(" (+2 more)")

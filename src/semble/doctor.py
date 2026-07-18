@@ -38,13 +38,17 @@ def _platform_checks(manifest: dict[str, Any] | None = None) -> list[AssetCheck]
     ]
     try:
         manifest = load_asset_manifest() if manifest is None else manifest
+        platform_data = manifest["platform"]
+        expected_os = str(platform_data["operating_system"])
+        expected_arch = str(platform_data["architecture"])
+        minimum = platform_data["minimum_version"]
+        kind = minimum.get("kind")
+        required = str(minimum.get("value", ""))
     except OfflineAssetError as error:
         return [*checks, AssetCheck("wheel platform", False, str(error))]
+    except (AttributeError, KeyError, TypeError):
+        return [*checks, AssetCheck("wheel platform", False, "Asset manifest has no valid platform requirements")]
 
-    platform_data = manifest["platform"]
-    expected_os = str(platform_data["operating_system"])
-    expected_arch = str(platform_data["architecture"])
-    minimum = platform_data["minimum_version"]
     machine = platform.machine().lower()
     normalized_machine = "arm64" if machine in {"arm64", "aarch64"} else "x86_64" if machine == "amd64" else machine
     actual_os = "macos" if sys.platform == "darwin" else "linux" if sys.platform == "linux" else sys.platform
@@ -57,8 +61,6 @@ def _platform_checks(manifest: dict[str, Any] | None = None) -> list[AssetCheck]
         )
     )
 
-    kind = minimum.get("kind")
-    required = str(minimum.get("value", ""))
     if kind == "glibc":
         libc_name, libc_version = platform.libc_ver()
         ok = actual_os == "linux" and libc_name == "glibc" and _version_at_least(libc_version, required)
@@ -92,11 +94,14 @@ def _parser_checks(full: bool) -> list[AssetCheck]:
                     parser.parse(b"")
             except Exception as error:
                 failures.append(f"{language} ({error})")
+        failure_detail = f"failed: {', '.join(failures[:8])}"
+        if len(failures) > 8:
+            failure_detail += f" (+{len(failures) - 8} more)"
         parser_checks = [
             AssetCheck(
                 "all grammar parsers",
                 not failures,
-                f"{len(languages)} loaded locally" if not failures else f"failed: {', '.join(failures[:8])}",
+                f"{len(languages)} loaded locally" if not failures else failure_detail,
             )
         ]
     else:
