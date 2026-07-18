@@ -158,6 +158,7 @@ def _platform_details(manifest: dict[str, Any]) -> tuple[str, str]:
 
 def _grammar_members(names: set[str]) -> set[str]:
     """Return every native grammar member under the canonical wheel path."""
+    # Keep Windows libraries visible so exact-set validation rejects them instead of silently ignoring them.
     return {
         name.removeprefix(GRAMMAR_PREFIX)
         for name in names
