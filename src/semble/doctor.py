@@ -9,7 +9,13 @@ from typing import Any
 
 from model2vec.utils import get_package_extras
 
-from semble._offline import AssetCheck, bundled_grammar_languages, load_asset_manifest, validate_bundled_assets
+from semble._offline import (
+    AssetCheck,
+    OfflineAssetError,
+    bundled_grammar_languages,
+    load_asset_manifest,
+    validate_bundled_assets,
+)
 from semble.version import __version__
 
 
@@ -26,7 +32,15 @@ def _version_at_least(actual: str, minimum: str) -> bool:
 
 def _platform_checks(manifest: dict[str, Any] | None = None) -> list[AssetCheck]:
     """Return checks for the platform declared by the installed wheel."""
-    manifest = load_asset_manifest() if manifest is None else manifest
+    checks = [
+        AssetCheck("Semble version", True, __version__),
+        AssetCheck("Python", (3, 10) <= sys.version_info[:2] < (3, 15), platform.python_version()),
+    ]
+    try:
+        manifest = load_asset_manifest() if manifest is None else manifest
+    except OfflineAssetError as error:
+        return [*checks, AssetCheck("wheel platform", False, str(error))]
+
     platform_data = manifest["platform"]
     expected_os = str(platform_data["operating_system"])
     expected_arch = str(platform_data["architecture"])
@@ -35,15 +49,13 @@ def _platform_checks(manifest: dict[str, Any] | None = None) -> list[AssetCheck]
     normalized_machine = "arm64" if machine in {"arm64", "aarch64"} else "x86_64" if machine == "amd64" else machine
     actual_os = "macos" if sys.platform == "darwin" else "linux" if sys.platform == "linux" else sys.platform
 
-    checks = [
-        AssetCheck("Semble version", True, __version__),
-        AssetCheck("Python", (3, 10) <= sys.version_info[:2] < (3, 15), platform.python_version()),
+    checks.append(
         AssetCheck(
             "wheel platform",
             (actual_os, normalized_machine) == (expected_os, expected_arch),
             f"installed for {expected_os} {expected_arch}; running on {actual_os} {normalized_machine}",
-        ),
-    ]
+        )
+    )
 
     kind = minimum.get("kind")
     required = str(minimum.get("value", ""))
@@ -67,7 +79,10 @@ def _parser_checks(full: bool) -> list[AssetCheck]:
 
     if full:
         failures: list[str] = []
-        languages = bundled_grammar_languages()
+        try:
+            languages = bundled_grammar_languages()
+        except OfflineAssetError as error:
+            return [AssetCheck("all grammar parsers", False, str(error))]
         for language in languages:
             try:
                 parser = _cached_get_parser(language)  # type: ignore[arg-type]

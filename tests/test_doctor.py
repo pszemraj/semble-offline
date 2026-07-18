@@ -3,7 +3,8 @@ from unittest.mock import patch
 
 import pytest
 
-from semble.doctor import _platform_checks, _version_at_least
+from semble._offline import AssetCheck, OfflineAssetError
+from semble.doctor import _parser_checks, _platform_checks, _version_at_least
 
 
 def _manifest(operating_system: str, architecture: str, kind: str, minimum: str) -> dict:
@@ -48,3 +49,19 @@ def test_platform_mismatch_fails(monkeypatch: pytest.MonkeyPatch) -> None:
         checks = _platform_checks(_manifest("macos", "arm64", "macos", "11.0"))
     assert not next(check for check in checks if check.name == "wheel platform").ok
     assert not next(check for check in checks if check.name == "macOS 11.0+").ok
+
+
+def test_platform_checks_report_unreadable_manifest() -> None:
+    """An unreadable asset manifest becomes a failed diagnostic check."""
+    with patch("semble.doctor.load_asset_manifest", side_effect=OfflineAssetError("cannot read asset manifest")):
+        checks = _platform_checks()
+    platform_check = next(check for check in checks if check.name == "wheel platform")
+    assert not platform_check.ok
+    assert platform_check.detail == "cannot read asset manifest"
+
+
+def test_full_parser_checks_report_unreadable_source_manifest() -> None:
+    """An unreadable grammar source manifest becomes a failed diagnostic check."""
+    with patch("semble.doctor.bundled_grammar_languages", side_effect=OfflineAssetError("cannot read grammar sources")):
+        checks = _parser_checks(full=True)
+    assert checks == [AssetCheck("all grammar parsers", False, "cannot read grammar sources")]
