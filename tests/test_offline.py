@@ -51,6 +51,28 @@ def test_asset_validation_reports_invalid_exclusion_metadata() -> None:
     assert not exclusion.ok
 
 
+def test_asset_validation_reports_undeclared_model_file(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stale or injected model file fails exact-set validation."""
+    model_dir = tmp_path / "model"
+    grammar_dir = tmp_path / "grammars"
+    model_dir.mkdir()
+    grammar_dir.mkdir()
+    (model_dir / "config.json").touch()
+    (model_dir / "stale.safetensors").touch()
+    manifest = {
+        "format_version": 2,
+        "model": {"files": {"config.json": "unused"}},
+        "grammars": {"files": {}, "excluded": {"ebnf": "excluded"}},
+        "platform": {"library_suffix": ".so"},
+    }
+    monkeypatch.setattr("semble._offline._BUNDLED_DIR", tmp_path)
+    with patch("semble._offline.load_asset_manifest", return_value=manifest):
+        checks = validate_bundled_assets()
+    model_check = next(check for check in checks if check.name == "bundled model")
+    assert not model_check.ok
+    assert model_check.detail == "unexpected stale.safetensors"
+
+
 def test_bundled_languages_report_malformed_asset_manifest() -> None:
     """Language enumeration preserves the offline-asset error boundary."""
     with patch("semble._offline.load_asset_manifest", return_value={"format_version": 2}):

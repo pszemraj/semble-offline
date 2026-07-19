@@ -168,9 +168,9 @@ def validate_bundled_assets(full: bool = False) -> list[AssetCheck]:
     for section, directory in (("model", _BUNDLED_DIR / "model"), ("grammars", _BUNDLED_DIR / "grammars")):
         expected = expected_sections[section]
         actual = {path.name for path in directory.iterdir() if path.is_file()} if directory.is_dir() else set()
-        relevant_actual = {
-            name for name in actual if name in expected or section == "grammars" and name.endswith((".so", ".dylib"))
-        }
+        relevant_actual = (
+            actual if section == "model" else {name for name in actual if name.endswith((".so", ".dylib"))}
+        )
         missing = sorted(set(expected) - actual)
         unexpected = sorted(relevant_actual - set(expected))
         ok = not missing and not unexpected

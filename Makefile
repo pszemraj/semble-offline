@@ -41,4 +41,4 @@ build:
 	$(PYTHON) -m build --wheel
 
 verify-wheel:
-	$(PYTHON) scripts/verify_wheel.py dist/semble-0.5.1+offline.2-py3-none-manylinux_2_34_x86_64.whl
+	$(PYTHON) scripts/verify_wheel.py dist/*.whl

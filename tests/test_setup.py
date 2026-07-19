@@ -37,6 +37,7 @@ def _make_bundle(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
         "platform": {
             "architecture": "x86_64",
             "library_suffix": ".so",
+            "minimum_version": {"kind": "glibc", "value": "2.34"},
             "operating_system": "linux",
             "wheel_tag": "manylinux_2_34_x86_64",
         },
@@ -75,7 +76,34 @@ def test_load_manifest_rejects_suffix_mismatch(setup_namespace: dict[str, Any], 
     bundle, manifest = _make_bundle(tmp_path)
     manifest["platform"]["library_suffix"] = ".dylib"
     _write_manifest(bundle, manifest)
-    with pytest.raises(RuntimeError, match="do not match the bundle manifest"):
+    with pytest.raises(RuntimeError, match="Unsupported Semble Offline bundle platform"):
+        setup_namespace["_load_manifest"](bundle)
+
+
+def test_load_manifest_rejects_wrong_wheel_tag(setup_namespace: dict[str, Any], tmp_path: Path) -> None:
+    """A bundle cannot select an arbitrary wheel tag for supported native assets."""
+    bundle, manifest = _make_bundle(tmp_path)
+    manifest["platform"]["wheel_tag"] = "manylinux_2_39_x86_64"
+    _write_manifest(bundle, manifest)
+    with pytest.raises(RuntimeError, match="Unsupported Semble Offline bundle platform"):
+        setup_namespace["_load_manifest"](bundle)
+
+
+def test_load_manifest_requires_platform_minimum(setup_namespace: dict[str, Any], tmp_path: Path) -> None:
+    """A supported bundle must declare its canonical operating-system floor."""
+    bundle, manifest = _make_bundle(tmp_path)
+    del manifest["platform"]["minimum_version"]
+    _write_manifest(bundle, manifest)
+    with pytest.raises(RuntimeError, match="Unsupported Semble Offline bundle platform"):
+        setup_namespace["_load_manifest"](bundle)
+
+
+def test_load_manifest_reports_malformed_sections(setup_namespace: dict[str, Any], tmp_path: Path) -> None:
+    """Malformed manifest sections retain the contextual setup error."""
+    bundle, manifest = _make_bundle(tmp_path)
+    manifest["platform"] = []
+    _write_manifest(bundle, manifest)
+    with pytest.raises(RuntimeError, match="Invalid Semble Offline bundle manifest"):
         setup_namespace["_load_manifest"](bundle)
 
 
@@ -98,7 +126,18 @@ def test_select_bundle_rejects_host_platform_mismatch(
 ) -> None:
     """A bundle for another platform cannot be selected for the build host."""
     bundle, manifest = _make_bundle(tmp_path)
-    manifest["platform"]["architecture"] = "arm64"
+    grammar_files = manifest["grammars"]["files"]
+    dylib_files = {name.removesuffix(".so") + ".dylib": digest for name, digest in grammar_files.items()}
+    for path in (bundle / "grammars").glob("*.so"):
+        path.rename(path.with_suffix(".dylib"))
+    manifest["grammars"]["files"] = dylib_files
+    manifest["platform"] = {
+        "architecture": "arm64",
+        "library_suffix": ".dylib",
+        "minimum_version": {"kind": "macos", "value": "11.0"},
+        "operating_system": "macos",
+        "wheel_tag": "macosx_11_0_arm64",
+    }
     _write_manifest(bundle, manifest)
     select_bundle = setup_namespace["_select_bundle"]
     monkeypatch.setitem(select_bundle.__globals__, "_SOURCE_BUNDLE", bundle)

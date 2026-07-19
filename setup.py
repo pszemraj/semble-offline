@@ -18,6 +18,18 @@ from setuptools.dist import Distribution
 _ROOT = Path(__file__).resolve().parent
 _SOURCE_BUNDLE = _ROOT / "src" / "semble" / "_bundled"
 _STAGED_BUNDLE_ENV = "SEMBLE_OFFLINE_BUNDLE_DIR"
+_SUPPORTED_PLATFORMS = {
+    ("linux", "x86_64"): {
+        "library_suffix": ".so",
+        "minimum_version": {"kind": "glibc", "value": "2.34"},
+        "wheel_tag": "manylinux_2_34_x86_64",
+    },
+    ("macos", "arm64"): {
+        "library_suffix": ".dylib",
+        "minimum_version": {"kind": "macos", "value": "11.0"},
+        "wheel_tag": "macosx_11_0_arm64",
+    },
+}
 
 
 def _load_manifest(bundle: Path) -> dict[str, Any]:
@@ -30,9 +42,16 @@ def _load_manifest(bundle: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
         raise RuntimeError(f"Invalid Semble Offline bundle manifest: {manifest_path}") from error
 
-    suffix = platform_data.get("library_suffix")
+    if not isinstance(platform_data, dict) or not isinstance(grammar_data, dict):
+        raise RuntimeError(f"Invalid Semble Offline bundle manifest: {manifest_path}")
+    platform_key = (platform_data.get("operating_system"), platform_data.get("architecture"))
+    expected_platform = _SUPPORTED_PLATFORMS.get(platform_key)
+    if expected_platform is None or any(platform_data.get(key) != value for key, value in expected_platform.items()):
+        raise RuntimeError(f"Unsupported Semble Offline bundle platform: {manifest_path}")
+
+    suffix = expected_platform["library_suffix"]
     files = grammar_data.get("files")
-    if manifest.get("format_version") != 2 or suffix not in {".so", ".dylib"} or not isinstance(files, dict):
+    if manifest.get("format_version") != 2 or not isinstance(files, dict):
         raise RuntimeError(f"Unsupported Semble Offline bundle manifest: {manifest_path}")
     if grammar_data.get("expected_count") != 264 or len(files) != 264:
         raise RuntimeError(f"A release wheel bundle must contain exactly 264 grammars: {manifest_path}")
