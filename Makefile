@@ -11,7 +11,7 @@ help:
 	@echo "  typecheck     Run mypy"
 	@echo "  format        Apply Ruff fixes and formatting"
 	@echo "  check         Run tests, lint, and type checking"
-	@echo "  build         Build the Linux wheel"
+	@echo "  build         Build the wheel for the staged platform bundle"
 	@echo "  verify-wheel  Verify the built release wheel"
 
 install:
@@ -41,4 +41,4 @@ build:
 	$(PYTHON) -m build --wheel
 
 verify-wheel:
-	$(PYTHON) scripts/verify_wheel.py dist/semble-0.5.1+offline.1-py3-none-manylinux_2_34_x86_64.whl
+	$(PYTHON) scripts/verify_wheel.py dist/*.whl

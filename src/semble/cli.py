@@ -80,7 +80,7 @@ def _mcp_main() -> None:
     args = parser.parse_args()
     if any(find_spec(dep) is None for dep in get_package_extras("semble", "mcp")):
         print(
-            "MCP dependencies are not installed. Reinstall Semble Offline with the [mcp] extra from the same wheel or Git URL.",
+            "MCP dependencies are not installed. Reinstall Semble Offline with the [mcp] extra from the same release wheel.",
             file=sys.stderr,
         )
         raise SystemExit(1)

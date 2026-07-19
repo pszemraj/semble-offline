@@ -1,6 +1,6 @@
 # Contributing
 
-Semble Offline is a narrow Linux distribution layer over upstream [MinishLab/semble](https://github.com/MinishLab/semble). Contributions should improve installation, offline reliability, asset provenance, Linux wheel quality, or compatibility with a newer upstream release. General search features and cross-platform support usually belong upstream.
+Semble Offline is a narrow Linux x86_64 and Apple Silicon macOS distribution layer over upstream [MinishLab/semble](https://github.com/MinishLab/semble). Contributions should improve installation, offline reliability, asset provenance, platform wheel quality, or compatibility with a newer upstream release. General search features and additional platform support usually belong upstream.
 
 Open an issue before starting a large change so the scope and upstream destination are clear. Small bug fixes and documentation corrections can go directly to a focused pull request.
 
@@ -35,10 +35,9 @@ python -m mypy src
 Changes to bundled assets or packaging must also build and inspect the wheel:
 
 ```bash
-python -m pip install build auditwheel
+python -m pip install "build==1.5.0" "auditwheel==6.7.0"
 python -m build --wheel
-python scripts/verify_wheel.py dist/semble-0.5.1+offline.1-py3-none-manylinux_2_34_x86_64.whl
-python -m auditwheel show dist/semble-0.5.1+offline.1-py3-none-manylinux_2_34_x86_64.whl
+python scripts/verify_wheel.py --check-linux-policy dist/semble-0.5.1+offline.2-py3-none-manylinux_2_34_x86_64.whl
 ```
 
 ## Pull requests
@@ -46,7 +45,7 @@ python -m auditwheel show dist/semble-0.5.1+offline.1-py3-none-manylinux_2_34_x8
 - Keep each change focused and explain whether it is fork-specific or suitable for upstream.
 - Add tests for behavior changes and update user-facing documentation when commands or guarantees change.
 - Do not add automatic runtime downloads. Explicit user requests such as searching a remote Git URL are a separate concern.
-- Preserve the Linux x86_64 and glibc 2.34 support statement unless a fully built, tested, and distributable replacement is included.
+- Preserve the Linux x86_64/glibc 2.34 and Apple Silicon macOS 11 support statements unless fully built, tested, and distributable replacements are included.
 - Do not commit generated wheels, archives, caches, or local environments.
 - Do not publish packages, push tags, or create releases as part of an ordinary pull request.
 

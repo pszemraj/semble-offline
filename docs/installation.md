@@ -1,6 +1,6 @@
 # Install and configure an agent
 
-Semble Offline supports CPython 3.10 through 3.14 on Linux x86_64 with glibc 2.34 or later.
+Semble Offline supports CPython 3.10 through 3.14 on Linux x86_64 with glibc 2.34 or later and Apple Silicon macOS 11 or later.
 
 ## 1. Activate the destination environment
 
@@ -8,19 +8,21 @@ Activate the Python environment that the agent will use. The installer records t
 
 ## 2. Install Semble Offline
 
-Choose one command. The release wheel is the preferred fixed artifact:
+Choose the release wheel matching the destination platform.
+
+Linux x86_64:
 
 ```bash
-python -m pip install "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.5.1%2Boffline.1/semble-0.5.1%2Boffline.1-py3-none-manylinux_2_34_x86_64.whl"
+python -m pip install "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.5.1%2Boffline.2/semble-0.5.1%2Boffline.2-py3-none-manylinux_2_34_x86_64.whl"
 ```
 
-Install from the tagged Git source when a wheel URL is not convenient:
+Apple Silicon macOS:
 
 ```bash
-python -m pip install "semble[mcp] @ git+https://github.com/pszemraj/semble-offline.git@v0.5.1+offline.1"
+python -m pip install "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.5.1%2Boffline.2/semble-0.5.1%2Boffline.2-py3-none-macosx_11_0_arm64.whl"
 ```
 
-The Git route requires `git`, GitHub access, and access to build requirements through the configured package index. Both routes obtain ordinary Python dependencies from that index. Remove `[mcp]` only if the agent will call the CLI directly.
+The macOS release wheel is the only supported end-user macOS installation path. A Git-source build intentionally fails on macOS unless a maintainer first prepares a native bundle and sets `SEMBLE_OFFLINE_BUNDLE_DIR`. Linux can use the matching release wheel or the `v0.5.1+offline.2` Git tag. Ordinary Python dependencies still come from the configured package index. Remove `[mcp]` only if the agent will call the CLI directly.
 
 ## 3. Verify the installation
 
@@ -30,7 +32,7 @@ Run the full check before configuring an agent or moving the environment behind 
 HF_HUB_OFFLINE=1 python -m semble doctor --full
 ```
 
-The command checks the supported platform, every bundled asset hash, representative grammar aliases, the embedding model, and the MCP dependencies. It should end with `All required checks passed.` Both `semble --version` and `python -m semble --version` should report `0.5.1+offline.1`.
+The command checks the supported platform, every bundled asset hash, all 264 grammar parsers, the embedding model, and the MCP dependencies. It should end with `All required checks passed.` Both `semble --version` and `python -m semble --version` should report `0.5.1+offline.2`.
 
 ## 4. Configure the agent
 
@@ -68,6 +70,6 @@ The [README agent block](../README.md#paste-this-into-your-agent) includes insta
 
 MCP entries invoke the absolute `sys.executable` path from the environment used to run `semble install`, with arguments `-m semble`. Keep that environment in place. If it moves, rerun `semble install` to refresh the path.
 
-Use the same wheel or Git requirement with `--upgrade --force-reinstall` to upgrade or repair the package. Do not follow it with an unqualified `python -m pip install semble`, which may replace this distribution with upstream Semble and restore runtime asset downloads.
+Use the same release-wheel requirement with `--upgrade --force-reinstall` to upgrade or repair the package. Do not follow it with an unqualified `python -m pip install semble`, which may replace this distribution with upstream Semble and restore runtime asset downloads.
 
 For a target with no package-index access, use the [offline transfer procedure](offline-transfer.md).

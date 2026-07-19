@@ -1,0 +1,104 @@
+from pathlib import Path
+
+import pytest
+
+from scripts import build_grammar_bundle
+from scripts.build_grammar_bundle import validate_sources
+
+
+def test_validate_sources_accepts_exact_pin() -> None:
+    """Exact source, revision, symbol, and license metadata is accepted."""
+    sources = {
+        "csharp": {
+            "library": "libtree_sitter_c_sharp.so",
+            "license": "MIT",
+            "repository": "https://github.com/tree-sitter/tree-sitter-c-sharp",
+            "revision": "abc123",
+        }
+    }
+    definitions = {
+        "csharp": {
+            "c_symbol": "c_sharp",
+            "repo": "https://github.com/tree-sitter/tree-sitter-c-sharp",
+            "rev": "abc123",
+        }
+    }
+    validate_sources(sources, definitions, {"tree-sitter/tree-sitter-c-sharp": "MIT"})
+
+
+def test_validate_sources_rejects_revision_drift() -> None:
+    """A definition revision different from the fork's pin is rejected."""
+    sources = {
+        "python": {
+            "library": "libtree_sitter_python.so",
+            "license": "MIT",
+            "repository": "https://github.com/tree-sitter/tree-sitter-python",
+            "revision": "old",
+        }
+    }
+    definitions = {
+        "python": {
+            "repo": "https://github.com/tree-sitter/tree-sitter-python",
+            "rev": "new",
+        }
+    }
+    with pytest.raises(RuntimeError, match="revision"):
+        validate_sources(sources, definitions, {"tree-sitter/tree-sitter-python": "MIT"})
+
+
+def test_compiler_provenance_uses_xcrun_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Apple Clang provenance uses xcrun instead of GCC's unsupported sysroot flag."""
+    monkeypatch.setattr(build_grammar_bundle.sys, "platform", "darwin")
+    monkeypatch.delenv("SDKROOT", raising=False)
+    monkeypatch.delenv("CONDA_BUILD_SYSROOT", raising=False)
+    calls: list[tuple[str, ...]] = []
+
+    def fake_output(*args: str, cwd: object = None) -> str:
+        assert cwd is None
+        return "Apple clang version 17.0.0"
+
+    def fake_run(args: tuple[str, ...], **kwargs: object) -> object:
+        calls.append(args)
+        assert kwargs == {"check": False, "capture_output": True, "text": True}
+        return type("Result", (), {"returncode": 0, "stdout": "/Applications/Xcode.app/SDKs/MacOSX.sdk\n"})()
+
+    monkeypatch.setattr(build_grammar_bundle, "_output", fake_output)
+    monkeypatch.setattr(build_grammar_bundle.subprocess, "run", fake_run)
+
+    provenance = build_grammar_bundle._compiler_provenance()
+
+    assert calls == [("xcrun", "--show-sdk-path")]
+    assert provenance["compiler_sysroot"] == "/Applications/Xcode.app/SDKs/MacOSX.sdk"
+
+
+def test_language_pack_checkout_applies_all_patches(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The source checkout applies both the linker and pinned-revision fixes."""
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str, **kwargs: object) -> None:
+        commands.append(args)
+
+    monkeypatch.setattr(build_grammar_bundle, "_run", fake_run)
+    monkeypatch.setattr(
+        build_grammar_bundle, "_output", lambda *args, **kwargs: build_grammar_bundle.LANGUAGE_PACK_COMMIT
+    )
+
+    build_grammar_bundle._clone_language_pack(tmp_path)
+
+    applied = [
+        command[-1]
+        for command in commands
+        if command[:3] == ("git", "apply", "--unidiff-zero") and "--check" not in command
+    ]
+    assert applied == [str(patch) for patch in build_grammar_bundle.LANGUAGE_PACK_PATCHES]
+
+
+def test_macos_install_name_is_stable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Bundle staging on macOS removes the temporary checkout from each dylib ID."""
+    commands: list[tuple[str, ...]] = []
+    monkeypatch.setattr(build_grammar_bundle, "_run", lambda *args, **kwargs: commands.append(args))
+    library = tmp_path / "libtree_sitter_python.dylib"
+
+    build_grammar_bundle._set_macos_install_name(library)
+
+    assert commands == [("install_name_tool", "-id", "@rpath/libtree_sitter_python.dylib", str(library))]

@@ -1,16 +1,25 @@
-name: GitHub Release wheel
+name: GitHub Release wheels
 
 on:
   push:
     tags: ["v*"]
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
-  contents: write
+  contents: read
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  release:
-    name: Build and attach wheel
+  preflight:
+    name: Validate release tag
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -18,50 +27,71 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-          cache: pip
-
-      - name: Validate release tag
+      - name: Validate version and main-branch ancestry
         run: |
           expected="v$(python -c 'import runpy; print(runpy.run_path("src/semble/version.py")["__version__"])')"
           test "$GITHUB_REF_NAME" = "$expected"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA^{commit}" origin/main
 
-      - name: Install build and test dependencies
+  wheels:
+    name: Build and test platform wheels
+    needs: preflight
+    permissions:
+      contents: read
+    uses: ./.github/workflows/wheels.yaml
+
+  release:
+    name: Publish immutable GitHub Release
+    needs: wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install verification tools
+        run: python -m pip install "auditwheel==6.7.0"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - name: Verify release payload
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install build auditwheel
-
-      - name: Run source tests
-        run: |
-          python -m pip install ".[dev,mcp]"
-          python -m pytest
-
-      - name: Build reproducible wheel
-        run: |
-          export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
-          python -m build --wheel --outdir dist
-          python -m build --wheel --outdir /tmp/semble-wheel-rebuild
-          cmp dist/*.whl /tmp/semble-wheel-rebuild/*.whl
-
-      - name: Verify wheel contents and compatibility
-        run: |
-          python scripts/verify_wheel.py dist/*.whl
-          python -m auditwheel show dist/*.whl
-
-      - name: Test installed wheel without runtime network access
-        run: |
-          python -m venv /tmp/semble-wheel-test
-          /tmp/semble-wheel-test/bin/python -m pip install "$PWD/dist/semble-0.5.1+offline.1-py3-none-manylinux_2_34_x86_64.whl[mcp]"
-          HF_HUB_OFFLINE=1 HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 /tmp/semble-wheel-test/bin/python -m semble doctor --full
-
-      - name: Create checksums
-        run: sha256sum dist/*.whl > dist/SHA256SUMS
-
-      - name: Create or update GitHub Release
+          test "$(find dist -maxdepth 1 -name '*.whl' | wc -l)" -eq 2
+          python scripts/verify_wheel.py --check-linux-policy dist/*-manylinux_2_34_x86_64.whl
+          python scripts/verify_wheel.py dist/*-macosx_11_0_arm64.whl
+          cd dist
+          sha256sum -- *.whl > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: Create, verify, and publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/*.whl dist/SHA256SUMS --clobber
+            test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = "true" || {
+              echo "Refusing to modify an already-published release" >&2
+              exit 1
+            }
           else
-            gh release create "$GITHUB_REF_NAME" dist/*.whl dist/SHA256SUMS --verify-tag --generate-notes --title "Semble Offline $GITHUB_REF_NAME"
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes --title "Semble Offline $GITHUB_REF_NAME"
           fi
+          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' > "$RUNNER_TEMP/existing-assets"
+          while IFS= read -r asset; do
+            test -z "$asset" || gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes
+          done < "$RUNNER_TEMP/existing-assets"
+          gh release upload "$GITHUB_REF_NAME" dist/*.whl dist/SHA256SUMS
+          mkdir "$RUNNER_TEMP/release-assets"
+          gh release download "$GITHUB_REF_NAME" --dir "$RUNNER_TEMP/release-assets"
+          cd "$RUNNER_TEMP/release-assets"
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 3
+          test "$(find . -maxdepth 1 -type f -name '*.whl' | wc -l)" -eq 2
+          test -f SHA256SUMS
+          sha256sum --check SHA256SUMS
+          python "$GITHUB_WORKSPACE/scripts/verify_wheel.py" --check-linux-policy ./*-manylinux_2_34_x86_64.whl
+          python "$GITHUB_WORKSPACE/scripts/verify_wheel.py" ./*-macosx_11_0_arm64.whl
+          gh release edit "$GITHUB_REF_NAME" --draft=false

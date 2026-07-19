@@ -1,6 +1,6 @@
 # Bundled third-party assets
 
-This distribution contains assets that would otherwise be downloaded when Semble first runs. They are included to support firewalled and air-gapped Linux x86_64 environments.
+This distribution contains assets that would otherwise be downloaded when Semble first runs. They are included to support firewalled and air-gapped Linux x86_64 and Apple Silicon macOS environments.
 
 ## Embedding model
 
@@ -8,7 +8,7 @@ This distribution contains assets that would otherwise be downloaded when Semble
 
 ## Tree-sitter grammars
 
-`grammars/` contains 264 shared libraries extracted from the Linux x86_64 parser archive published with [`tree-sitter-language-pack` 1.6.2](https://github.com/kreuzberg-dev/tree-sitter-language-pack/releases/tag/v1.6.2). The language pack is MIT licensed; its license is included as `LICENSE.tree-sitter-language-pack`.
+`grammars/` contains 264 platform-specific shared libraries selected from [`tree-sitter-language-pack` 1.6.2](https://github.com/kreuzberg-dev/tree-sitter-language-pack/releases/tag/v1.6.2). The Linux wheel retains 260 binaries from the published Linux x86_64 parser archive and rebuilds the four C++ scanner grammars from the same pinned sources. The macOS wheel builds all 264 from those source revisions. The language pack is MIT licensed; its license is included as `LICENSE.tree-sitter-language-pack`.
 
 Each grammar is built from a separate upstream repository. `grammar-sources.json` records the exact repository, revision, library filename, and SPDX identifier reported by the language pack's v1.6.2 source metadata. `asset-manifest.json` records a SHA-256 digest for every included binary.
 

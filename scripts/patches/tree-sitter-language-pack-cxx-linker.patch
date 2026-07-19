@@ -1,0 +1,36 @@
+diff --git a/crates/ts-pack-core/build.rs b/crates/ts-pack-core/build.rs
+--- a/crates/ts-pack-core/build.rs
++++ b/crates/ts-pack-core/build.rs
+@@ -143,2 +143,7 @@ fn compile_parser_dynamic(name: &str, c_symbol: Option<&str>, parser_dir: &Path,
+-    let compiler = cc::Build::new().get_compiler();
+-    let is_msvc = compiler.is_like_msvc();
++    let c_compiler = cc::Build::new().get_compiler();
++    let is_msvc = c_compiler.is_like_msvc();
++    let compiler = if scanner_cc.exists() && !is_msvc {
++        cc::Build::new().cpp(true).get_compiler()
++    } else {
++        c_compiler
++    };
+@@ -174,6 +179,11 @@ fn compile_parser_dynamic(name: &str, c_symbol: Option<&str>, parser_dir: &Path,
+         }
++        if scanner_cc.exists() {
++            cmd.arg("-x").arg("c");
++        }
+         for src in &c_sources {
+             cmd.arg(src);
+         }
+         // C++ scanner: compile separately and link
+         if scanner_cc.exists() {
++            // The C++ driver performs the final link, but parser sources remain C.
++            cmd.arg("-x").arg("none");
+@@ -208,5 +218,10 @@ fn compile_parser_dynamic(name: &str, c_symbol: Option<&str>, parser_dir: &Path,
+                     eprintln!("Failed to run C++ compiler for '{}': {}", name, e);
+                     return false;
+                 }
+             }
++            if os == "macos" || os == "ios" {
++                cmd.arg("-lc++");
++            } else {
++                cmd.arg("-lstdc++");
++            }
+         }

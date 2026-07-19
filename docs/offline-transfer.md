@@ -4,11 +4,20 @@ The release wheel contains Semble's model and grammar assets, but it does not ve
 
 ## 1. Download on a connected machine
 
-Use a connected Linux x86_64 system with the same Python minor version as the target. Activate a staging environment, then paste:
+Use a connected machine with the same supported operating system, architecture, and Python minor version as the target. Activate a staging environment, create the destination directory, then run the matching download command.
+
+Linux x86_64:
 
 ```bash
 mkdir semble-offline-wheels
-python -m pip download --only-binary=:all: --dest semble-offline-wheels "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.5.1%2Boffline.1/semble-0.5.1%2Boffline.1-py3-none-manylinux_2_34_x86_64.whl"
+python -m pip download --only-binary=:all: --dest semble-offline-wheels "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.5.1%2Boffline.2/semble-0.5.1%2Boffline.2-py3-none-manylinux_2_34_x86_64.whl"
+```
+
+Apple Silicon macOS:
+
+```bash
+mkdir semble-offline-wheels
+python -m pip download --only-binary=:all: --dest semble-offline-wheels "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.5.1%2Boffline.2/semble-0.5.1%2Boffline.2-py3-none-macosx_11_0_arm64.whl"
 ```
 
 The resulting `semble-offline-wheels/` directory is the complete transfer payload.
@@ -22,7 +31,7 @@ Move `semble-offline-wheels/` to the disconnected machine through the approved t
 Activate the destination environment, change to the directory containing `semble-offline-wheels/`, then paste:
 
 ```bash
-python -m pip install --no-index --find-links ./semble-offline-wheels "semble[mcp]==0.5.1+offline.1"
+python -m pip install --no-index --find-links ./semble-offline-wheels "semble[mcp]==0.5.1+offline.2"
 ```
 
 `--no-index` prevents the installer from contacting a package index and `--find-links` restricts dependency resolution to the transferred directory.

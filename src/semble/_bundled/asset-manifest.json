@@ -1,5 +1,5 @@
 {
-  "format_version": 1,
+  "format_version": 2,
   "grammars": {
     "aliases": {
       "csharp": "c_sharp",
@@ -7,9 +7,6 @@
       "nushell": "nu",
       "vb": "vb_dotnet"
     },
-    "archive_sha256": "5b5a4d2d5319b7d2fae6c7a87e8bf8618c6c827842dba7641a93693980e6b5ea",
-    "archive_size": 19134009,
-    "archive_url": "https://github.com/kreuzberg-dev/tree-sitter-language-pack/releases/download/v1.6.2/parsers-linux-x86_64.tar.zst",
     "excluded": {
       "ebnf": "Excluded because the v1.6.2 grammar is GPL-3.0; .ebnf files use line chunking."
     },
@@ -158,16 +155,16 @@
       "libtree_sitter_mermaid.so": "c1ef8f8db74c1addc57aa2ed90a5cb0872f63f6058d1921045efef4df0de3003",
       "libtree_sitter_meson.so": "319eb64b60e975492900f0651d0ecc5d15b91342f0c755cbf8b5b3b95f3e92f2",
       "libtree_sitter_mlir.so": "e8a451cfab6b93bd6f23eec9ce0daa060400731bb59fcecd98e869660f2fe7c1",
-      "libtree_sitter_mojo.so": "02fac6d27e3010b6a73933565e0ddbfabb8399d910773ff3dac4c06dccd7bc35",
+      "libtree_sitter_mojo.so": "bb7a5263ccf047ee79cb3694caa23e22986dd897112ed35ec706ef9880b54e04",
       "libtree_sitter_move.so": "01832445bab8c27ed7471e50d66a3723c386bd3c6c5456124cc4407445f3c4ea",
       "libtree_sitter_nasm.so": "8bb20df3adfefa1e25abf3316f63483193210505293fd263817e5066427242e6",
       "libtree_sitter_netlinx.so": "1bdaba96e38e105bf11911e6f95f42dcb73a3724669b9583ed2be4948a4f5147",
       "libtree_sitter_nginx.so": "fcab79966ffe1ff64146c0bff6b1bb38542ed268b059995084e01bd39e38a162",
       "libtree_sitter_nickel.so": "1a4f3c9afb66a193d09bf4a4a23dbcae394c97c12546c3d97fcde535f7323fa9",
-      "libtree_sitter_nim.so": "6a0ecade6147b9bdf1007115f42e62dd3bef966b6a2a84f84d2904698e1859f0",
+      "libtree_sitter_nim.so": "2e5cadab390efd969399a0d7568c10f7ff735c92491709cb0b58c82be7c7e753",
       "libtree_sitter_ninja.so": "c1749ef148c1a2b9617887d3a4ebfaaa3b71cd8ae41ecf9d75abb03bafa79325",
       "libtree_sitter_nix.so": "6af7046c4c5752f8bbc34068fdbe132bb25334882652ff1632c4a22f8f7da390",
-      "libtree_sitter_norg.so": "00a29766f4eff469fb41f21de335ea44123fedb046dee2973a883f1ce2e75f13",
+      "libtree_sitter_norg.so": "0c3c3e8816abc798d6d5cbc3f21a2496a8b2937945543eb89c484bd32636bb67",
       "libtree_sitter_nqc.so": "4cb87643a97b62175d772a2924008cb97db5475283fc497cb5d16bce6f18891b",
       "libtree_sitter_nu.so": "f31167e91effde4407f65a16235620513e74c12d598b2d1e6589a53e20aac599",
       "libtree_sitter_objc.so": "1d7619c7394cd20d534296750a20f0ba62c529346d7dab5fefc0de417a9e0b52",
@@ -272,7 +269,7 @@
       "libtree_sitter_wat.so": "f4d837dd46900ba04de564824720be2d32295b972cdedde9c077b6168607a4ce",
       "libtree_sitter_wgsl.so": "2103244ce6edb383bf70906208a8901f759edc71a51f7570a65eac981ad9d16c",
       "libtree_sitter_wit.so": "187f64f76bc989d6c1cfff5eb780332e8aa74eeeabf7c3c0d4a7621760a402d6",
-      "libtree_sitter_wolfram.so": "bc02042f32dc3a2cb32543150f9869237a2a2b80033577428562c2e27f6d4992",
+      "libtree_sitter_wolfram.so": "96a431d49e4bd8955d2794beaaf6890fe885ccbc77109389bf425a1e4efbe08e",
       "libtree_sitter_xml.so": "6cf88d1ecca456c9f1f8e4b74af84350aadaf0c18a807fe4a05212fed0c8b1a6",
       "libtree_sitter_yaml.so": "0b77d4b54ac4226f5d99574fdaabdbf88ba9922d8115277e967c479f1cd8bd17",
       "libtree_sitter_yuck.so": "1bd52a4185b9980cfca3333c0d7761e20fea5fe8d3fedddfc46973d845ef0511",
@@ -281,6 +278,31 @@
       "libtree_sitter_zsh.so": "19261562497db74768d51625e4b6f387a546562f6410af4a010df225d3512dc9"
     },
     "package": "tree-sitter-language-pack",
+    "provenance": {
+      "base": {
+        "archive_sha256": "5b5a4d2d5319b7d2fae6c7a87e8bf8618c6c827842dba7641a93693980e6b5ea",
+        "archive_size": 19134009,
+        "archive_url": "https://github.com/kreuzberg-dev/tree-sitter-language-pack/releases/download/v1.6.2/parsers-linux-x86_64.tar.zst",
+        "kind": "release-archive"
+      },
+      "rebuilt": {
+        "c_compiler": "x86_64-conda-linux-gnu-cc (conda-forge gcc 11.4.0-13) 11.4.0",
+        "compiler_sysroot": "sysroot_linux-64 2.17",
+        "cxx_compiler": "x86_64-conda-linux-gnu-c++ (conda-forge gcc 11.4.0-13) 11.4.0",
+        "kind": "source-build",
+        "language_pack_commit": "6bb9761028dfc3a72329d15f0f339ec7ccb56159",
+        "libraries": [
+          "libtree_sitter_mojo.so",
+          "libtree_sitter_nim.so",
+          "libtree_sitter_norg.so",
+          "libtree_sitter_wolfram.so"
+        ],
+        "linker_patch_sha256": "1614183ac27e2e7afc16d043604fc099204242fe3c5f0c93ceee46b6d309769e",
+        "rpath_removed_with": "patchelf 0.17.2",
+        "rust_toolchain": "1.91",
+        "tree_sitter_cli": "0.26.8"
+      }
+    },
     "version": "1.6.2"
   },
   "model": {
@@ -296,7 +318,11 @@
   },
   "platform": {
     "architecture": "x86_64",
-    "glibc_minimum": "2.34",
+    "library_suffix": ".so",
+    "minimum_version": {
+      "kind": "glibc",
+      "value": "2.34"
+    },
     "operating_system": "linux",
     "wheel_tag": "manylinux_2_34_x86_64"
   },

@@ -11,6 +11,7 @@ from typing import Any
 
 _BUNDLED_DIR = Path(__file__).resolve().parent / "_bundled"
 _MANIFEST_PATH = _BUNDLED_DIR / "asset-manifest.json"
+_GRAMMAR_SOURCES_PATH = _BUNDLED_DIR / "grammar-sources.json"
 
 
 class OfflineAssetError(RuntimeError):
@@ -26,16 +27,30 @@ class AssetCheck:
     detail: str
 
 
+def _load_json_object(path: Path, description: str) -> dict[str, Any]:
+    """Load a JSON object or raise a contextual offline-asset error."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise OfflineAssetError(f"Cannot read bundled {description}: {path}") from error
+    if not isinstance(value, dict):
+        raise OfflineAssetError(f"Bundled {description} is not a JSON object: {path}")
+    return value
+
+
 @cache
 def load_asset_manifest() -> dict[str, Any]:
-    """Load the checked-in asset provenance and integrity manifest."""
-    try:
-        manifest = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise OfflineAssetError(f"Cannot read bundled asset manifest: {_MANIFEST_PATH}") from error
-    if not isinstance(manifest, dict) or manifest.get("format_version") != 1:
+    """Load the bundled platform provenance and integrity manifest."""
+    manifest = _load_json_object(_MANIFEST_PATH, "asset manifest")
+    if manifest.get("format_version") != 2:
         raise OfflineAssetError(f"Unsupported bundled asset manifest: {_MANIFEST_PATH}")
     return manifest
+
+
+@cache
+def load_grammar_sources() -> dict[str, Any]:
+    """Load the language-to-source provenance mapping bundled with the wheel."""
+    return _load_json_object(_GRAMMAR_SOURCES_PATH, "grammar source manifest")
 
 
 def _manifest_files(section: str) -> dict[str, str]:
@@ -50,6 +65,17 @@ def _manifest_files(section: str) -> dict[str, str]:
     if not valid_files:
         raise OfflineAssetError(f"Asset manifest has no valid {section}.files section")
     return files
+
+
+def grammar_library_suffix() -> str:
+    """Return the native-library suffix declared by the bundled platform manifest."""
+    try:
+        suffix = load_asset_manifest()["platform"]["library_suffix"]
+    except (KeyError, TypeError) as error:
+        raise OfflineAssetError("Asset manifest has no valid platform.library_suffix") from error
+    if suffix not in {".so", ".dylib"}:
+        raise OfflineAssetError(f"Unsupported bundled grammar library suffix: {suffix!r}")
+    return str(suffix)
 
 
 def bundled_model_dir() -> Path:
@@ -78,6 +104,20 @@ def bundled_grammar_dir() -> Path:
     return grammar_dir
 
 
+def bundled_grammar_languages() -> list[str]:
+    """Return every bundled language identifier in stable order."""
+    sources = load_grammar_sources()
+    try:
+        expected_count = load_asset_manifest()["grammars"].get("expected_count")
+    except (AttributeError, KeyError, TypeError) as error:
+        raise OfflineAssetError("Asset manifest has no valid grammars section") from error
+    if len(sources) != expected_count:
+        raise OfflineAssetError("Grammar source manifest count does not match the asset manifest")
+    if not all(isinstance(language, str) and isinstance(source, dict) for language, source in sources.items()):
+        raise OfflineAssetError("Grammar source manifest contains invalid entries")
+    return sorted(sources)
+
+
 def grammar_symbol(language: str) -> str:
     """Return the shared-library symbol name for a Semble language identifier."""
     aliases = load_asset_manifest()["grammars"].get("aliases", {})
@@ -88,7 +128,7 @@ def grammar_library_path(language: str) -> Path | None:
     """Return the bundled grammar library for language, without downloading anything."""
     directory = bundled_grammar_dir()
     symbol = grammar_symbol(language)
-    library = directory / f"libtree_sitter_{symbol}.so"
+    library = directory / f"libtree_sitter_{symbol}{grammar_library_suffix()}"
     return library if library.is_file() else None
 
 
@@ -119,16 +159,18 @@ def validate_bundled_assets(full: bool = False) -> list[AssetCheck]:
     checks: list[AssetCheck] = []
     try:
         manifest = load_asset_manifest()
-        checks.append(AssetCheck("asset manifest", True, "format 1"))
+        suffix = grammar_library_suffix()
+        expected_sections = {section: _manifest_files(section) for section in ("model", "grammars")}
+        checks.append(AssetCheck("asset manifest", True, "format 2"))
     except OfflineAssetError as error:
         return [AssetCheck("asset manifest", False, str(error))]
 
     for section, directory in (("model", _BUNDLED_DIR / "model"), ("grammars", _BUNDLED_DIR / "grammars")):
-        expected = _manifest_files(section)
+        expected = expected_sections[section]
         actual = {path.name for path in directory.iterdir() if path.is_file()} if directory.is_dir() else set()
-        relevant_actual = {
-            name for name in actual if name in expected or section == "grammars" and name.endswith(".so")
-        }
+        relevant_actual = (
+            actual if section == "model" else {name for name in actual if name.endswith((".so", ".dylib"))}
+        )
         missing = sorted(set(expected) - actual)
         unexpected = sorted(relevant_actual - set(expected))
         ok = not missing and not unexpected
@@ -152,11 +194,11 @@ def validate_bundled_assets(full: bool = False) -> list[AssetCheck]:
             )
 
     excluded = manifest["grammars"].get("excluded", {})
-    ebnf_absent = not (_BUNDLED_DIR / "grammars" / "libtree_sitter_ebnf.so").exists()
+    ebnf_absent = not (_BUNDLED_DIR / "grammars" / f"libtree_sitter_ebnf{suffix}").exists()
     checks.append(
         AssetCheck(
             "EBNF exclusion",
-            ebnf_absent and "ebnf" in excluded,
+            ebnf_absent and isinstance(excluded, dict) and "ebnf" in excluded,
             "GPL-3.0 grammar is not bundled; line chunking is used",
         )
     )
