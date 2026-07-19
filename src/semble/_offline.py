@@ -107,7 +107,11 @@ def bundled_grammar_dir() -> Path:
 def bundled_grammar_languages() -> list[str]:
     """Return every bundled language identifier in stable order."""
     sources = load_grammar_sources()
-    if len(sources) != load_asset_manifest()["grammars"].get("expected_count"):
+    try:
+        expected_count = load_asset_manifest()["grammars"].get("expected_count")
+    except (AttributeError, KeyError, TypeError) as error:
+        raise OfflineAssetError("Asset manifest has no valid grammars section") from error
+    if len(sources) != expected_count:
         raise OfflineAssetError("Grammar source manifest count does not match the asset manifest")
     if not all(isinstance(language, str) and isinstance(source, dict) for language, source in sources.items()):
         raise OfflineAssetError("Grammar source manifest contains invalid entries")
@@ -156,12 +160,13 @@ def validate_bundled_assets(full: bool = False) -> list[AssetCheck]:
     try:
         manifest = load_asset_manifest()
         suffix = grammar_library_suffix()
+        expected_sections = {section: _manifest_files(section) for section in ("model", "grammars")}
         checks.append(AssetCheck("asset manifest", True, "format 2"))
     except OfflineAssetError as error:
         return [AssetCheck("asset manifest", False, str(error))]
 
     for section, directory in (("model", _BUNDLED_DIR / "model"), ("grammars", _BUNDLED_DIR / "grammars")):
-        expected = _manifest_files(section)
+        expected = expected_sections[section]
         actual = {path.name for path in directory.iterdir() if path.is_file()} if directory.is_dir() else set()
         relevant_actual = {
             name for name in actual if name in expected or section == "grammars" and name.endswith((".so", ".dylib"))
@@ -193,7 +198,7 @@ def validate_bundled_assets(full: bool = False) -> list[AssetCheck]:
     checks.append(
         AssetCheck(
             "EBNF exclusion",
-            ebnf_absent and "ebnf" in excluded,
+            ebnf_absent and isinstance(excluded, dict) and "ebnf" in excluded,
             "GPL-3.0 grammar is not bundled; line chunking is used",
         )
     )

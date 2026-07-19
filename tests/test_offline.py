@@ -1,6 +1,10 @@
+from copy import deepcopy
+from unittest.mock import patch
+
 import pytest
 
 from semble._offline import (
+    OfflineAssetError,
     bundled_grammar_dir,
     bundled_grammar_languages,
     bundled_model_dir,
@@ -23,6 +27,35 @@ def test_asset_manifest_matches_bundle() -> None:
     assert set(grammar_files) == {path.name for path in bundled_grammar_dir().glob(f"*{suffix}")}
     assert len(bundled_grammar_languages()) == 264
     assert all(check.ok for check in validate_bundled_assets())
+
+
+def test_asset_validation_reports_malformed_manifest_section() -> None:
+    """A malformed format-2 manifest becomes a failed check rather than an exception."""
+    manifest = deepcopy(load_asset_manifest())
+    del manifest["model"]
+    with patch("semble._offline.load_asset_manifest", return_value=manifest):
+        checks = validate_bundled_assets()
+    assert len(checks) == 1
+    assert checks[0].name == "asset manifest"
+    assert not checks[0].ok
+    assert checks[0].detail == "Asset manifest has no valid model.files section"
+
+
+def test_asset_validation_reports_invalid_exclusion_metadata() -> None:
+    """Invalid exclusion metadata fails its check without aborting diagnostics."""
+    manifest = deepcopy(load_asset_manifest())
+    manifest["grammars"]["excluded"] = None
+    with patch("semble._offline.load_asset_manifest", return_value=manifest):
+        checks = validate_bundled_assets()
+    exclusion = next(check for check in checks if check.name == "EBNF exclusion")
+    assert not exclusion.ok
+
+
+def test_bundled_languages_report_malformed_asset_manifest() -> None:
+    """Language enumeration preserves the offline-asset error boundary."""
+    with patch("semble._offline.load_asset_manifest", return_value={"format_version": 2}):
+        with pytest.raises(OfflineAssetError, match="no valid grammars section"):
+            bundled_grammar_languages()
 
 
 @pytest.mark.parametrize(
