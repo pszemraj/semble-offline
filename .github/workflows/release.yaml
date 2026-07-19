@@ -59,7 +59,7 @@ jobs:
           test "$(find dist -maxdepth 1 -name '*.whl' | wc -l)" -eq 2
           for wheel in dist/*.whl; do python scripts/verify_wheel.py "$wheel"; done
           cd dist
-          sha256sum *.whl > SHA256SUMS
+          sha256sum -- *.whl > SHA256SUMS
           sha256sum --check SHA256SUMS
       - name: Create, verify, and publish release
         env:
