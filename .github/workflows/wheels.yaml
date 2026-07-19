@@ -131,6 +131,7 @@ jobs:
         run: |
           wheel="$(find "$PWD/wheel" -name '*.whl' -print -quit)"
           python -m pip install "${wheel}[dev,mcp]"
+          python -m pip install --force-reinstall --no-deps "$wheel"
           python -m pip check
           python -c 'import pathlib, semble; assert "site-packages" in str(pathlib.Path(semble.__file__).resolve())'
       - name: Run installed-package tests
@@ -165,6 +166,7 @@ jobs:
         run: |
           wheel="$(find "$PWD/wheel" -name '*.whl' -print -quit)"
           python -m pip install "${wheel}[dev,mcp]"
+          python -m pip install --force-reinstall --no-deps "$wheel"
           python -m pip check
           python -c 'import pathlib, semble; assert "site-packages" in str(pathlib.Path(semble.__file__).resolve())'
       - name: Run installed-package tests
