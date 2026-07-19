@@ -55,7 +55,7 @@ The generator requires exactly 264 `.so` libraries, rejects EBNF, and records th
 
 ## Reproducibility and release
 
-Build each wheel twice from the same staged bundle and `SOURCE_DATE_EPOCH`; the two wheel files must be byte-identical. Build sequentially because setuptools uses a shared local `build/` directory.
+Build each wheel twice from independent clean source snapshots with the same staged bundle and `SOURCE_DATE_EPOCH`; the two wheel files must be byte-identical. CI creates both snapshots from the release commit with `git archive`, so setuptools build state cannot leak from one build into the other.
 
 Pushing a tag that exactly matches `v` plus `semble.__version__`, currently `v0.5.1+offline.2`, calls the same reusable wheel workflow used by pull requests. It builds both platforms, verifies them, installs each artifact across Python 3.10 through 3.14, and runs full offline diagnostics. The final job reruns the wheel checks, including Linux ABI policy analysis, writes one `SHA256SUMS`, creates a draft GitHub Release, uploads and downloads the assets for another verification pass, then publishes the draft. A rerun may replace assets only while the release remains a draft; the workflow refuses to modify an already-published release.
 

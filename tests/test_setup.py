@@ -8,6 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
+from scripts.build_grammar_bundle import PLATFORMS
+from scripts.verify_wheel import SUPPORTED_PLATFORMS
+
 
 @pytest.fixture
 def setup_namespace(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
@@ -51,6 +54,17 @@ def test_load_manifest_accepts_valid_release_bundle(setup_namespace: dict[str, A
     """A complete format-2 release bundle is accepted."""
     bundle, manifest = _make_bundle(tmp_path)
     assert setup_namespace["_load_manifest"](bundle) == manifest
+
+
+def test_release_platform_contracts_agree(setup_namespace: dict[str, Any]) -> None:
+    """Bundle generation, wheel assembly, and release verification use the same platform contract."""
+    builder_platforms = {
+        (details["operating_system"], details["architecture"]): {
+            key: details[key] for key in ("library_suffix", "minimum_version", "wheel_tag")
+        }
+        for details in PLATFORMS.values()
+    }
+    assert setup_namespace["_SUPPORTED_PLATFORMS"] == SUPPORTED_PLATFORMS == builder_platforms
 
 
 def test_load_manifest_rejects_unsupported_format(setup_namespace: dict[str, Any], tmp_path: Path) -> None:

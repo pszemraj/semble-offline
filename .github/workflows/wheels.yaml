@@ -28,8 +28,12 @@ jobs:
         run: |
           SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
           export SOURCE_DATE_EPOCH
-          python -m build --wheel --outdir dist-linux
-          python -m build --wheel --outdir "$RUNNER_TEMP/linux-rebuild"
+          git archive --format=tar --output="$RUNNER_TEMP/source.tar" HEAD
+          mkdir "$RUNNER_TEMP/source-one" "$RUNNER_TEMP/source-two"
+          tar -xf "$RUNNER_TEMP/source.tar" -C "$RUNNER_TEMP/source-one"
+          tar -xf "$RUNNER_TEMP/source.tar" -C "$RUNNER_TEMP/source-two"
+          (cd "$RUNNER_TEMP/source-one" && python -m build --wheel --outdir "$GITHUB_WORKSPACE/dist-linux")
+          (cd "$RUNNER_TEMP/source-two" && python -m build --wheel --outdir "$RUNNER_TEMP/linux-rebuild")
           cmp dist-linux/*.whl "$RUNNER_TEMP"/linux-rebuild/*.whl
       - name: Verify contents and compatibility
         run: python scripts/verify_wheel.py --check-linux-policy dist-linux/*.whl
@@ -63,16 +67,20 @@ jobs:
       - name: Build pinned grammar bundle
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
-        run: python scripts/build_grammar_bundle.py --platform macos-arm64 --output build/macos-arm64-bundle
+        run: python scripts/build_grammar_bundle.py --platform macos-arm64 --output "$RUNNER_TEMP/macos-arm64-bundle"
       - name: Build reproducibly
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
-          SEMBLE_OFFLINE_BUNDLE_DIR: ${{ github.workspace }}/build/macos-arm64-bundle
+          SEMBLE_OFFLINE_BUNDLE_DIR: ${{ runner.temp }}/macos-arm64-bundle
         run: |
           SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
           export SOURCE_DATE_EPOCH
-          python -m build --wheel --outdir dist-macos
-          python -m build --wheel --outdir "$RUNNER_TEMP/macos-rebuild"
+          git archive --format=tar --output="$RUNNER_TEMP/source.tar" HEAD
+          mkdir "$RUNNER_TEMP/source-one" "$RUNNER_TEMP/source-two"
+          tar -xf "$RUNNER_TEMP/source.tar" -C "$RUNNER_TEMP/source-one"
+          tar -xf "$RUNNER_TEMP/source.tar" -C "$RUNNER_TEMP/source-two"
+          (cd "$RUNNER_TEMP/source-one" && python -m build --wheel --outdir "$GITHUB_WORKSPACE/dist-macos")
+          (cd "$RUNNER_TEMP/source-two" && python -m build --wheel --outdir "$RUNNER_TEMP/macos-rebuild")
           cmp dist-macos/*.whl "$RUNNER_TEMP"/macos-rebuild/*.whl
       - name: Verify contents, architecture, and dependencies
         env:
@@ -123,6 +131,7 @@ jobs:
         run: |
           wheel="$(find "$PWD/wheel" -name '*.whl' -print -quit)"
           python -m pip install "${wheel}[dev,mcp]"
+          python -m pip check
           python -c 'import pathlib, semble; assert "site-packages" in str(pathlib.Path(semble.__file__).resolve())'
       - name: Run installed-package tests
         run: python -m pytest
@@ -156,6 +165,7 @@ jobs:
         run: |
           wheel="$(find "$PWD/wheel" -name '*.whl' -print -quit)"
           python -m pip install "${wheel}[dev,mcp]"
+          python -m pip check
           python -c 'import pathlib, semble; assert "site-packages" in str(pathlib.Path(semble.__file__).resolve())'
       - name: Run installed-package tests
         run: python -m pytest

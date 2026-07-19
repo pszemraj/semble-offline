@@ -68,3 +68,15 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/wheels.yaml
+
+  success:
+    name: CI success
+    if: always()
+    needs: [test, quality, wheels]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every CI job
+        run: |
+          test "${{ needs.test.result }}" = "success"
+          test "${{ needs.quality.result }}" = "success"
+          test "${{ needs.wheels.result }}" = "success"
