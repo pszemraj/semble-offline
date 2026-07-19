@@ -21,6 +21,7 @@ MH_DYLIB = 6
 PLATFORM_MACOS = 1
 LC_VERSION_MIN_MACOSX = 0x24
 LC_BUILD_VERSION = 0x32
+LC_ID_DYLIB = 0xD
 PT_DYNAMIC = 2
 DT_RPATH = 15
 DT_RUNPATH = 29
@@ -108,17 +109,26 @@ def _unpack_macos_version(value: int) -> tuple[int, int, int]:
     return value >> 16, value >> 8 & 0xFF, value & 0xFF
 
 
-def _macho_minimum_versions(data: bytes) -> list[tuple[int, int, int]]:
-    """Return minimum macOS versions from a validated Mach-O load-command table."""
+def _macho_load_commands(data: bytes) -> list[tuple[int, int, int]]:
+    """Return command, offset, and size tuples from a validated Mach-O load-command table."""
     command_count = struct.unpack_from("<I", data, 16)[0]
     offset = 32
-    minimum_versions: list[tuple[int, int, int]] = []
+    commands: list[tuple[int, int, int]] = []
     for _ in range(command_count):
         if offset + 8 > len(data):
             raise RuntimeError("Mach-O load command table is truncated")
         command, size = struct.unpack_from("<II", data, offset)
         if size < 8 or offset + size > len(data):
             raise RuntimeError("Mach-O load command has an invalid size")
+        commands.append((command, offset, size))
+        offset += size
+    return commands
+
+
+def _macho_minimum_versions(data: bytes) -> list[tuple[int, int, int]]:
+    """Return minimum macOS versions from a validated Mach-O load-command table."""
+    minimum_versions: list[tuple[int, int, int]] = []
+    for command, offset, size in _macho_load_commands(data):
         if command == LC_BUILD_VERSION:
             if size < 24:
                 raise RuntimeError("Mach-O LC_BUILD_VERSION is truncated")
@@ -129,11 +139,33 @@ def _macho_minimum_versions(data: bytes) -> list[tuple[int, int, int]]:
             if size < 16:
                 raise RuntimeError("Mach-O LC_VERSION_MIN_MACOSX is truncated")
             minimum_versions.append(_unpack_macos_version(struct.unpack_from("<I", data, offset + 8)[0]))
-        offset += size
     return minimum_versions
 
 
-def _verify_macho_arm64(data: bytes, maximum_minimum: tuple[int, int, int]) -> None:
+def _macho_install_name(data: bytes) -> str:
+    """Return the unique LC_ID_DYLIB string from a Mach-O library."""
+    names: list[str] = []
+    for command, offset, size in _macho_load_commands(data):
+        if command != LC_ID_DYLIB:
+            continue
+        if size < 24:
+            raise RuntimeError("Mach-O LC_ID_DYLIB is truncated")
+        name_offset = struct.unpack_from("<I", data, offset + 8)[0]
+        if name_offset < 24 or name_offset >= size:
+            raise RuntimeError("Mach-O LC_ID_DYLIB has an invalid name offset")
+        raw_name = data[offset + name_offset : offset + size]
+        if b"\0" not in raw_name:
+            raise RuntimeError("Mach-O LC_ID_DYLIB has no terminated install name")
+        try:
+            names.append(raw_name.split(b"\0", 1)[0].decode("utf-8"))
+        except UnicodeDecodeError as error:
+            raise RuntimeError("Mach-O LC_ID_DYLIB install name is not UTF-8") from error
+    if len(names) != 1:
+        raise RuntimeError("Mach-O grammar must declare one LC_ID_DYLIB install name")
+    return names[0]
+
+
+def _verify_macho_arm64(data: bytes, maximum_minimum: tuple[int, int, int], filename: str) -> None:
     """Verify a thin arm64 Mach-O and its declared minimum macOS version."""
     if len(data) < 32 or data[:4] != MACHO_64_LE:
         raise RuntimeError("grammar is not a thin 64-bit little-endian Mach-O library")
@@ -141,6 +173,9 @@ def _verify_macho_arm64(data: bytes, maximum_minimum: tuple[int, int, int]) -> N
         raise RuntimeError("Mach-O grammar is not arm64")
     if struct.unpack_from("<I", data, 12)[0] != MH_DYLIB:
         raise RuntimeError("Mach-O grammar is not a dynamic library")
+    expected_install_name = f"@rpath/{filename}"
+    if _macho_install_name(data) != expected_install_name:
+        raise RuntimeError(f"Mach-O grammar install name is not {expected_install_name}")
     minimum_versions = _macho_minimum_versions(data)
     if not minimum_versions:
         raise RuntimeError("Mach-O grammar declares no minimum macOS version")
@@ -187,12 +222,12 @@ def _verify_elf_x86_64(data: bytes) -> None:
     _verify_no_elf_search_paths(data)
 
 
-def _verify_native_library(data: bytes, operating_system: str) -> None:
+def _verify_native_library(data: bytes, operating_system: str, filename: str) -> None:
     """Verify a grammar library's native format and architecture."""
     if operating_system == "linux":
         _verify_elf_x86_64(data)
     elif operating_system == "macos":
-        _verify_macho_arm64(data, (11, 0, 0))
+        _verify_macho_arm64(data, (11, 0, 0), filename)
     else:
         raise RuntimeError(f"Unsupported manifest operating system: {operating_system}")
 
@@ -260,7 +295,7 @@ def _verify_file_hashes(
         if _sha256(data) != expected_hash:
             raise RuntimeError(f"Grammar hash mismatch: {filename}")
         try:
-            _verify_native_library(data, operating_system)
+            _verify_native_library(data, operating_system, filename)
         except RuntimeError as error:
             raise RuntimeError(f"Invalid native grammar {filename}: {error}") from error
     for filename, expected_hash in manifest["model"]["files"].items():

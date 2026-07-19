@@ -10,6 +10,7 @@ from scripts.verify_wheel import (
     DT_RUNPATH,
     ELF_ET_DYN,
     LC_BUILD_VERSION,
+    LC_ID_DYLIB,
     MACHO_64_LE,
     MH_DYLIB,
     PLATFORM_MACOS,
@@ -27,11 +28,17 @@ def _macho(
     cpu_type: int = CPU_TYPE_ARM64,
     file_type: int = MH_DYLIB,
     platform: int = PLATFORM_MACOS,
+    install_name: str = "@rpath/libtree_sitter_python.dylib",
 ) -> bytes:
     packed_version = minimum[0] << 16 | minimum[1] << 8 | minimum[2]
-    header = MACHO_64_LE + struct.pack("<IIIIIII", cpu_type, 3, file_type, 1, 24, 0, 0)
-    command = struct.pack("<IIIIII", LC_BUILD_VERSION, 24, platform, packed_version, packed_version, 0)
-    return header + command
+    build_command = struct.pack("<IIIIII", LC_BUILD_VERSION, 24, platform, packed_version, packed_version, 0)
+    encoded_name = install_name.encode() + b"\0"
+    install_name_size = (24 + len(encoded_name) + 7) // 8 * 8
+    install_name_command = struct.pack("<IIIIII", LC_ID_DYLIB, install_name_size, 24, 0, 0, 0)
+    install_name_command += encoded_name.ljust(install_name_size - 24, b"\0")
+    command_size = len(build_command) + len(install_name_command)
+    header = MACHO_64_LE + struct.pack("<IIIIIII", cpu_type, 3, file_type, 2, command_size, 0, 0)
+    return header + build_command + install_name_command
 
 
 def _platform_manifest(operating_system: str = "linux") -> dict[str, object]:
@@ -81,7 +88,7 @@ def test_accepts_linux_x86_64_header() -> None:
     header[:6] = b"\x7fELF\x02\x01"
     struct.pack_into("<H", header, 16, ELF_ET_DYN)
     struct.pack_into("<H", header, 18, 62)
-    _verify_native_library(bytes(header), "linux")
+    _verify_native_library(bytes(header), "linux", "libtree_sitter_python.so")
 
 
 @pytest.mark.parametrize("dynamic_tag", [DT_RPATH, DT_RUNPATH])
@@ -97,24 +104,24 @@ def test_rejects_linux_embedded_library_search_path(dynamic_tag: int) -> None:
     struct.pack_into("<IIQQQQQQ", header, 64, PT_DYNAMIC, 0, 120, 0, 0, 32, 32, 8)
     struct.pack_into("<qQqQ", header, 120, dynamic_tag, 0, 0, 0)
     with pytest.raises(RuntimeError, match="embedded RPATH or RUNPATH"):
-        _verify_native_library(bytes(header), "linux")
+        _verify_native_library(bytes(header), "linux", "libtree_sitter_python.so")
 
 
 def test_accepts_macos_11_arm64_header() -> None:
     """The native verifier accepts an arm64 Mach-O targeting macOS 11."""
-    _verify_native_library(_macho((11, 0, 0)), "macos")
+    _verify_native_library(_macho((11, 0, 0)), "macos", "libtree_sitter_python.dylib")
 
 
 def test_rejects_newer_macos_deployment_target() -> None:
     """A dylib requiring a newer OS than its wheel tag is rejected."""
     with pytest.raises(RuntimeError, match="newer than 11.0.0"):
-        _verify_native_library(_macho((15, 5, 0)), "macos")
+        _verify_native_library(_macho((15, 5, 0)), "macos", "libtree_sitter_python.dylib")
 
 
 def test_rejects_wrong_macos_architecture() -> None:
     """An Intel dylib cannot be mislabeled as an arm64 wheel asset."""
     with pytest.raises(RuntimeError, match="not arm64"):
-        _verify_native_library(_macho((11, 0, 0), cpu_type=0x01000007), "macos")
+        _verify_native_library(_macho((11, 0, 0), cpu_type=0x01000007), "macos", "libtree_sitter_python.dylib")
 
 
 def test_rejects_non_library_elf_type() -> None:
@@ -123,19 +130,26 @@ def test_rejects_non_library_elf_type() -> None:
     header[:6] = b"\x7fELF\x02\x01"
     struct.pack_into("<H", header, 18, 62)
     with pytest.raises(RuntimeError, match="not a shared library"):
-        _verify_native_library(bytes(header), "linux")
+        _verify_native_library(bytes(header), "linux", "libtree_sitter_python.so")
 
 
 def test_rejects_non_library_macho_type() -> None:
     """An arm64 Mach-O executable cannot masquerade as a grammar dylib."""
     with pytest.raises(RuntimeError, match="not a dynamic library"):
-        _verify_native_library(_macho((11, 0, 0), file_type=2), "macos")
+        _verify_native_library(_macho((11, 0, 0), file_type=2), "macos", "libtree_sitter_python.dylib")
 
 
 def test_rejects_non_macos_build_platform() -> None:
     """An arm64 iOS dylib cannot masquerade as a macOS grammar dylib."""
     with pytest.raises(RuntimeError, match="does not target macOS"):
-        _verify_native_library(_macho((11, 0, 0), platform=2), "macos")
+        _verify_native_library(_macho((11, 0, 0), platform=2), "macos", "libtree_sitter_python.dylib")
+
+
+def test_rejects_build_path_macho_install_name() -> None:
+    """A grammar dylib cannot retain a temporary build-directory identity."""
+    data = _macho((11, 0, 0), install_name="/private/tmp/build/libtree_sitter_python.dylib")
+    with pytest.raises(RuntimeError, match="install name is not @rpath/libtree_sitter_python.dylib"):
+        _verify_native_library(data, "macos", "libtree_sitter_python.dylib")
 
 
 @pytest.mark.parametrize("operating_system", ["linux", "macos"])

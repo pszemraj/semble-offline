@@ -206,6 +206,11 @@ def _build_libraries(checkout: Path, languages: list[str], platform_name: str) -
     return sorted((checkout / "target" / "release" / "build").glob(f"*/out/libs/libtree_sitter_*{suffix}"))
 
 
+def _set_macos_install_name(library: Path) -> None:
+    """Replace a build-directory dylib ID with its stable packaged identity."""
+    _run("install_name_tool", "-id", f"@rpath/{library.name}", str(library))
+
+
 def _stage_bundle(
     output: Path,
     built_libraries: list[Path],
@@ -231,10 +236,24 @@ def _stage_bundle(
         raise RuntimeError(f"Built grammar set mismatch; missing={missing}, unexpected={unexpected}")
 
     for name, source_path in sorted(by_name.items()):
-        shutil.copy2(source_path, grammar_dir / name)
+        staged_path = grammar_dir / name
+        shutil.copy2(source_path, staged_path)
+        if platform_name == "macos-arm64":
+            _set_macos_install_name(staged_path)
     files = {path.name: _sha256(path) for path in sorted(grammar_dir.iterdir())}
 
     base_manifest = _load_json(BASE_MANIFEST)
+    provenance = {
+        **_compiler_provenance(),
+        "kind": "source-build",
+        "language_pack_commit": LANGUAGE_PACK_COMMIT,
+        "linker_patch_sha256": _sha256(CXX_LINKER_PATCH),
+        "rust_toolchain": RUST_TOOLCHAIN,
+        "tree_sitter_cli": TREE_SITTER_CLI_VERSION,
+        "vendor_fetch_patch_sha256": _sha256(PINNED_REVISIONS_PATCH),
+    }
+    if platform_name == "macos-arm64":
+        provenance["install_name_pattern"] = "@rpath/<filename>"
     manifest = {
         "format_version": 2,
         "grammars": {
@@ -243,15 +262,7 @@ def _stage_bundle(
             "expected_count": len(files),
             "files": files,
             "package": "tree-sitter-language-pack",
-            "provenance": {
-                **_compiler_provenance(),
-                "kind": "source-build",
-                "language_pack_commit": LANGUAGE_PACK_COMMIT,
-                "linker_patch_sha256": _sha256(CXX_LINKER_PATCH),
-                "rust_toolchain": RUST_TOOLCHAIN,
-                "tree_sitter_cli": TREE_SITTER_CLI_VERSION,
-                "vendor_fetch_patch_sha256": _sha256(PINNED_REVISIONS_PATCH),
-            },
+            "provenance": provenance,
             "version": LANGUAGE_PACK_VERSION,
         },
         "model": base_manifest["model"],

@@ -91,3 +91,14 @@ def test_language_pack_checkout_applies_all_patches(monkeypatch: pytest.MonkeyPa
         if command[:3] == ("git", "apply", "--unidiff-zero") and "--check" not in command
     ]
     assert applied == [str(patch) for patch in build_grammar_bundle.LANGUAGE_PACK_PATCHES]
+
+
+def test_macos_install_name_is_stable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Bundle staging on macOS removes the temporary checkout from each dylib ID."""
+    commands: list[tuple[str, ...]] = []
+    monkeypatch.setattr(build_grammar_bundle, "_run", lambda *args, **kwargs: commands.append(args))
+    library = tmp_path / "libtree_sitter_python.dylib"
+
+    build_grammar_bundle._set_macos_install_name(library)
+
+    assert commands == [("install_name_tool", "-id", "@rpath/libtree_sitter_python.dylib", str(library))]

@@ -36,7 +36,7 @@ delocate-listdeps --all dist/semble-0.5.1+offline.2-py3-none-macosx_11_0_arm64.w
 delocate-wheel --require-archs arm64 --wheel-dir /tmp/semble-delocated dist/semble-0.5.1+offline.2-py3-none-macosx_11_0_arm64.whl
 ```
 
-The verifier checks every Mach-O header and deployment target. The release workflow additionally rejects a delocated audit copy if it gains a `.dylibs` directory, ensuring the published wheel depends only on system libraries.
+The verifier checks every Mach-O header, deployment target, and canonical `@rpath/<filename>` install name. The release workflow additionally rejects a delocated audit copy if it gains a `.dylibs` directory, ensuring the published wheel depends only on system libraries.
 
 ## Bundle builder behavior
 
