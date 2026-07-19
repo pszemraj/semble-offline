@@ -121,6 +121,7 @@ def main() -> None:
                     "language_pack_commit": LANGUAGE_PACK_COMMIT,
                     "libraries": [f"libtree_sitter_{name}.so" for name in REBUILT_CXX_GRAMMARS],
                     "linker_patch_sha256": _sha256(LINKER_PATCH),
+                    "rpath_removed_with": "patchelf 0.17.2",
                     "rust_toolchain": "1.91",
                     "tree_sitter_cli": "0.26.8",
                 },

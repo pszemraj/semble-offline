@@ -19,6 +19,9 @@ MACHO_64_LE = b"\xcf\xfa\xed\xfe"
 CPU_TYPE_ARM64 = 0x0100000C
 LC_VERSION_MIN_MACOSX = 0x24
 LC_BUILD_VERSION = 0x32
+PT_DYNAMIC = 2
+DT_RPATH = 15
+DT_RUNPATH = 29
 
 
 def _sha256(data: bytes) -> str:
@@ -121,12 +124,39 @@ def _verify_macho_arm64(data: bytes, maximum_minimum: tuple[int, int, int]) -> N
         raise RuntimeError(f"Mach-O grammar requires macOS {actual}, newer than {expected}")
 
 
+def _verify_no_elf_search_paths(data: bytes) -> None:
+    """Reject embedded runtime search paths from an ELF program-header table."""
+    program_offset = struct.unpack_from("<Q", data, 32)[0]
+    program_entry_size = struct.unpack_from("<H", data, 54)[0]
+    program_count = struct.unpack_from("<H", data, 56)[0]
+    if program_count and program_entry_size < 56:
+        raise RuntimeError("ELF program-header entry is truncated")
+    if program_offset + program_entry_size * program_count > len(data):
+        raise RuntimeError("ELF program-header table is truncated")
+
+    for index in range(program_count):
+        header_offset = program_offset + index * program_entry_size
+        if struct.unpack_from("<I", data, header_offset)[0] != PT_DYNAMIC:
+            continue
+        dynamic_offset = struct.unpack_from("<Q", data, header_offset + 8)[0]
+        dynamic_size = struct.unpack_from("<Q", data, header_offset + 32)[0]
+        if dynamic_size % 16 or dynamic_offset + dynamic_size > len(data):
+            raise RuntimeError("ELF dynamic table is truncated")
+        for entry_offset in range(dynamic_offset, dynamic_offset + dynamic_size, 16):
+            tag = struct.unpack_from("<q", data, entry_offset)[0]
+            if tag == 0:
+                break
+            if tag in {DT_RPATH, DT_RUNPATH}:
+                raise RuntimeError("ELF grammar contains an embedded RPATH or RUNPATH")
+
+
 def _verify_elf_x86_64(data: bytes) -> None:
-    """Verify a little-endian 64-bit x86-64 ELF library header."""
-    if len(data) < 20 or data[:4] != b"\x7fELF" or data[4:6] != b"\x02\x01":
+    """Verify a little-endian 64-bit x86-64 ELF library without embedded search paths."""
+    if len(data) < 64 or data[:4] != b"\x7fELF" or data[4:6] != b"\x02\x01":
         raise RuntimeError("grammar is not a 64-bit little-endian ELF library")
     if struct.unpack_from("<H", data, 18)[0] != 62:
         raise RuntimeError("ELF grammar is not x86-64")
+    _verify_no_elf_search_paths(data)
 
 
 def _verify_native_library(data: bytes, operating_system: str) -> None:
