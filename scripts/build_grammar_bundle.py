@@ -158,6 +158,7 @@ def _clone_language_pack(checkout: Path) -> None:
     if _output("git", "rev-parse", "HEAD", cwd=checkout) != LANGUAGE_PACK_COMMIT:
         raise RuntimeError("Language-pack checkout did not resolve to the pinned commit")
     for patch in LANGUAGE_PACK_PATCHES:
+        # Zero-context patches are tied to the verified commit above; --check makes any layout drift fail first.
         _run("git", "apply", "--unidiff-zero", "--check", str(patch), cwd=checkout)
         _run("git", "apply", "--unidiff-zero", str(patch), cwd=checkout)
 
