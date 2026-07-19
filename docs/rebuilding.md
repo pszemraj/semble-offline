@@ -11,11 +11,10 @@ python -m pip install -e ".[dev,mcp]"
 python -m pip install "build==1.5.0" "auditwheel==6.7.0"
 export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
 python -m build --wheel
-python scripts/verify_wheel.py dist/semble-0.5.1+offline.2-py3-none-manylinux_2_34_x86_64.whl
-python -m auditwheel show dist/semble-0.5.1+offline.2-py3-none-manylinux_2_34_x86_64.whl
+python scripts/verify_wheel.py --check-linux-policy dist/semble-0.5.1+offline.2-py3-none-manylinux_2_34_x86_64.whl
 ```
 
-`auditwheel` must report that the complete wheel is consistent with `manylinux_2_34_x86_64`; a filename alone is not sufficient evidence.
+The verifier uses `auditwheel`'s policy analysis to require compatibility with `manylinux_2_34_x86_64` or an older, wider-compatible policy; a filename alone is not sufficient evidence.
 
 ## macOS arm64 wheel
 
@@ -58,6 +57,6 @@ The generator requires exactly 264 `.so` libraries, rejects EBNF, and records th
 
 Build each wheel twice from the same staged bundle and `SOURCE_DATE_EPOCH`; the two wheel files must be byte-identical. Build sequentially because setuptools uses a shared local `build/` directory.
 
-Pushing a tag that exactly matches `v` plus `semble.__version__`, currently `v0.5.1+offline.2`, calls the same reusable wheel workflow used by pull requests. It builds both platforms, verifies them, installs each artifact across Python 3.10 through 3.14, and runs full offline diagnostics. The final job writes one `SHA256SUMS`, creates a draft GitHub Release, uploads and downloads the assets for re-verification, then publishes the draft. A rerun may replace assets only while the release remains a draft; the workflow refuses to modify an already-published release.
+Pushing a tag that exactly matches `v` plus `semble.__version__`, currently `v0.5.1+offline.2`, calls the same reusable wheel workflow used by pull requests. It builds both platforms, verifies them, installs each artifact across Python 3.10 through 3.14, and runs full offline diagnostics. The final job reruns the wheel checks, including Linux ABI policy analysis, writes one `SHA256SUMS`, creates a draft GitHub Release, uploads and downloads the assets for another verification pass, then publishes the draft. A rerun may replace assets only while the release remains a draft; the workflow refuses to modify an already-published release.
 
 The workflow does not build an sdist and does not publish to PyPI. Pushing tags or creating releases is a maintainer action and is never performed by the build scripts themselves.

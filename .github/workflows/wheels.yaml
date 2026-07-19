@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build-linux:
     name: Build Linux x86_64 wheel
@@ -28,11 +32,7 @@ jobs:
           python -m build --wheel --outdir "$RUNNER_TEMP/linux-rebuild"
           cmp dist-linux/*.whl "$RUNNER_TEMP"/linux-rebuild/*.whl
       - name: Verify contents and compatibility
-        run: |
-          python scripts/verify_wheel.py dist-linux/*.whl
-          python -m auditwheel show dist-linux/*.whl > "$RUNNER_TEMP/auditwheel.txt"
-          cat "$RUNNER_TEMP/auditwheel.txt"
-          grep -Fx 'consistent with the following platform tag: "manylinux_2_34_x86_64".' "$RUNNER_TEMP/auditwheel.txt"
+        run: python scripts/verify_wheel.py --check-linux-policy dist-linux/*.whl
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wheel-linux-x86_64

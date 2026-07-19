@@ -38,6 +38,7 @@ SUPPORTED_PLATFORMS = {
         "wheel_tag": "macosx_11_0_arm64",
     },
 }
+LINUX_AUDITWHEEL_POLICY = str(SUPPORTED_PLATFORMS[("linux", "x86_64")]["wheel_tag"])
 
 
 def _sha256(data: bytes) -> str:
@@ -336,13 +337,46 @@ def verify_wheel(path: Path) -> None:
         _verify_asset_hashes(wheel, names, manifest)
 
 
+def _auditwheel_policy(path: Path) -> tuple[str, int, int]:
+    """Return the detected policy name, its priority, and the target priority."""
+    from auditwheel.architecture import Architecture
+    from auditwheel.libc import Libc
+    from auditwheel.wheel_abi import analyze_wheel_abi
+
+    result = analyze_wheel_abi(
+        Libc.GLIBC,
+        Architecture.x86_64,
+        path,
+        frozenset(),
+        disable_isa_ext_check=False,
+        allow_graft=False,
+    )
+    target = result.policies.get_policy_by_name(LINUX_AUDITWHEEL_POLICY)
+    return result.overall_policy.name, result.overall_policy.priority, target.priority
+
+
+def verify_linux_policy(path: Path) -> str:
+    """Verify that auditwheel finds no requirement newer than the wheel's Linux policy."""
+    actual, actual_priority, target_priority = _auditwheel_policy(path)
+    if actual.startswith("linux_") or actual_priority > target_priority:
+        raise RuntimeError(f"Wheel requires {actual}, which does not satisfy {LINUX_AUDITWHEEL_POLICY}")
+    return actual
+
+
 def main() -> None:
     """Parse arguments, verify a wheel, and print a concise success result."""
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check-linux-policy",
+        action="store_true",
+        help=f"use auditwheel to enforce {LINUX_AUDITWHEEL_POLICY} compatibility",
+    )
     parser.add_argument("wheel", type=Path)
     args = parser.parse_args()
     verify_wheel(args.wheel)
-    print(f"Verified {args.wheel.name}: tag, notices, model, and 264 native grammar hashes are correct")
+    policy = verify_linux_policy(args.wheel) if args.check_linux_policy else None
+    detail = f", auditwheel policy {policy} satisfies {LINUX_AUDITWHEEL_POLICY}" if policy else ""
+    print(f"Verified {args.wheel.name}: tag, notices, model, and 264 native grammar hashes are correct{detail}")
 
 
 if __name__ == "__main__":

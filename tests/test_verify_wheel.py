@@ -19,6 +19,7 @@ from scripts.verify_wheel import (
     _verify_metadata,
     _verify_model_set,
     _verify_native_library,
+    verify_linux_policy,
     verify_wheel,
 )
 
@@ -208,3 +209,32 @@ def test_rejects_duplicate_wheel_members(tmp_path: Path) -> None:
             wheel.writestr("duplicate", b"second")
     with pytest.raises(RuntimeError, match="duplicate member names"):
         verify_wheel(path)
+
+
+@pytest.mark.parametrize(
+    ("policy", "priority"),
+    [("manylinux_2_34_x86_64", 100), ("manylinux_2_17_x86_64", 50)],
+)
+def test_accepts_equal_or_more_compatible_auditwheel_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    policy: str,
+    priority: int,
+) -> None:
+    """A wheel may meet the declared Linux floor or an older, wider-compatible one."""
+    monkeypatch.setattr("scripts.verify_wheel._auditwheel_policy", lambda path: (policy, priority, 100))
+    assert verify_linux_policy(Path("wheel.whl")) == policy
+
+
+@pytest.mark.parametrize(
+    ("policy", "priority"),
+    [("manylinux_2_35_x86_64", 101), ("linux_x86_64", 0)],
+)
+def test_rejects_incompatible_auditwheel_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    policy: str,
+    priority: int,
+) -> None:
+    """A newer glibc requirement or bare Linux policy cannot carry the declared tag."""
+    monkeypatch.setattr("scripts.verify_wheel._auditwheel_policy", lambda path: (policy, priority, 100))
+    with pytest.raises(RuntimeError, match="does not satisfy manylinux_2_34_x86_64"):
+        verify_linux_policy(Path("wheel.whl"))

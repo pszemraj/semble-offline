@@ -35,10 +35,9 @@ python -m mypy src
 Changes to bundled assets or packaging must also build and inspect the wheel:
 
 ```bash
-python -m pip install build auditwheel
+python -m pip install "build==1.5.0" "auditwheel==6.7.0"
 python -m build --wheel
-python scripts/verify_wheel.py dist/semble-0.5.1+offline.2-py3-none-manylinux_2_34_x86_64.whl
-python -m auditwheel show dist/semble-0.5.1+offline.2-py3-none-manylinux_2_34_x86_64.whl
+python scripts/verify_wheel.py --check-linux-policy dist/semble-0.5.1+offline.2-py3-none-manylinux_2_34_x86_64.whl
 ```
 
 ## Pull requests
