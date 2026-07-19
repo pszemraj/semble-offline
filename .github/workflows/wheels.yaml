@@ -29,8 +29,9 @@ jobs:
       - name: Verify contents and compatibility
         run: |
           python scripts/verify_wheel.py dist-linux/*.whl
-          python -m auditwheel show dist-linux/*.whl | tee "$RUNNER_TEMP/auditwheel.txt"
-          grep -F 'manylinux_2_34_x86_64' "$RUNNER_TEMP/auditwheel.txt"
+          python -m auditwheel show dist-linux/*.whl > "$RUNNER_TEMP/auditwheel.txt"
+          cat "$RUNNER_TEMP/auditwheel.txt"
+          grep -Fx 'consistent with the following platform tag: "manylinux_2_34_x86_64".' "$RUNNER_TEMP/auditwheel.txt"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wheel-linux-x86_64
@@ -100,7 +101,7 @@ jobs:
   test-linux:
     name: Test Linux wheel on Python ${{ matrix.python-version }}
     needs: build-linux
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
