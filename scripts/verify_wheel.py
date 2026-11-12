@@ -271,16 +271,12 @@ def _verify_grammar_set(
 
     if native_members != set(expected_grammars):
         raise RuntimeError("Wheel grammar contents do not match the asset manifest")
-    expected_count = manifest["grammars"].get("expected_count")
-    if expected_count != 264 or len(native_members) != expected_count:
-        raise RuntimeError("Wheel must contain exactly 264 grammars")
-    if any(not name.endswith(suffix) for name in native_members) or f"libtree_sitter_ebnf{suffix}" in native_members:
-        raise RuntimeError("Wheel has a wrong-platform grammar or includes EBNF")
-
     grammar_sources = _json_object(wheel, SOURCES_PATH)
     source_libraries = {source.get("library") for source in grammar_sources.values() if isinstance(source, dict)}
-    if len(grammar_sources) != 264 or source_libraries != native_members:
+    if manifest["grammars"].get("expected_count") != len(grammar_sources) or source_libraries != native_members:
         raise RuntimeError("Grammar source provenance does not match the wheel libraries")
+    if any(not name.endswith(suffix) for name in native_members):
+        raise RuntimeError("Wheel has a wrong-platform grammar")
     return expected_grammars
 
 
@@ -358,7 +354,8 @@ def _auditwheel_policy(path: Path) -> tuple[str, int, int]:
 def verify_linux_policy(path: Path) -> str:
     """Verify that auditwheel finds no requirement newer than the wheel's Linux policy."""
     actual, actual_priority, target_priority = _auditwheel_policy(path)
-    if actual.startswith("linux_") or actual_priority > target_priority:
+    # Auditwheel assigns higher priority to older, more widely compatible policies.
+    if actual.startswith("linux_") or actual_priority < target_priority:
         raise RuntimeError(f"Wheel requires {actual}, which does not satisfy {LINUX_AUDITWHEEL_POLICY}")
     return actual
 
@@ -376,7 +373,7 @@ def main() -> None:
     verify_wheel(args.wheel)
     policy = verify_linux_policy(args.wheel) if args.check_linux_policy else None
     detail = f", auditwheel policy {policy} satisfies {LINUX_AUDITWHEEL_POLICY}" if policy else ""
-    print(f"Verified {args.wheel.name}: tag, notices, model, and 264 native grammar hashes are correct{detail}")
+    print(f"Verified {args.wheel.name}: tag, notices, model, and declared native grammar hashes are correct{detail}")
 
 
 if __name__ == "__main__":

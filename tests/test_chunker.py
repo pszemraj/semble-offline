@@ -2,6 +2,7 @@ import logging
 from unittest.mock import patch
 
 import pytest
+from semble_grammars import UnsupportedPlatformError
 
 from semble._offline import OfflineAssetError
 from semble.chunking.chunking import Chunk, chunk_lines, chunk_source
@@ -43,6 +44,17 @@ def test_chunk_source_language() -> None:
             Chunk(content="1+1=3", file_path="foo.json", start_line=1, end_line=1, language=None)
         ]
         chunk_line_spy.assert_called_once()
+
+
+@pytest.mark.parametrize("language", [None, "python"])
+def test_chunk_source_line_numbers_match_content(language: str | None) -> None:
+    """chunk_source line numbers point at the lines each chunk's content comes from."""
+    source = "".join(f"def f{i}():\n    return {i}\n\n" for i in range(200))
+    lines = source.splitlines(keepends=True)
+    chunks = chunk_source(source, "foo.py", language)
+    assert len(chunks) > 1
+    for c in chunks:
+        assert c.content in "".join(lines[c.start_line - 1 : c.end_line])
 
 
 def test_core_chunk_empty_input() -> None:
@@ -95,31 +107,31 @@ def test_get_parser(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger="semble.chunking.core"):
         _cached_get_parser("hello")
         assert len(caplog.records) == 1
-        assert "not bundled" in caplog.records[0].message
+        assert "not found" in caplog.records[0].message
         assert "hello" in caplog.records[0].message
 
         caplog.clear()
         _cached_get_parser("hello")
         assert len(caplog.records) == 0
 
-    with patch("semble.chunking.core.get_parser", side_effect=ValueError):
+    with patch("semble.chunking.core.get_parser", side_effect=UnsupportedPlatformError):
         with caplog.at_level(logging.WARNING, logger="semble.chunking.core"):
-            _cached_get_parser("python")
+            _cached_get_parser("Python")
             assert len(caplog.records) == 1
-            assert "Uncaught exception" in caplog.records[0].message
+            assert "No bundled grammars for this platform" in caplog.records[0].message
 
             caplog.clear()
-            _cached_get_parser("python")
+            _cached_get_parser("Python")
             assert len(caplog.records) == 0
 
-    with patch("semble.chunking.core.get_parser", side_effect=RuntimeError):
+    with patch("semble.chunking.core.get_parser", side_effect=ValueError):
         with caplog.at_level(logging.WARNING, logger="semble.chunking.core"):
-            _cached_get_parser("ruby")
+            _cached_get_parser("Ruby")
             assert len(caplog.records) == 1
             assert "Uncaught exception" in caplog.records[0].message
 
             caplog.clear()
-            _cached_get_parser("ruby")
+            _cached_get_parser("Ruby")
             assert len(caplog.records) == 0
 
 
@@ -130,25 +142,11 @@ def test_chunks_is_none() -> None:
         assert chunks is None
 
 
-def test_unbundled_language_uses_line_chunking() -> None:
-    """A language absent from the local bundle falls back without calling the language pack."""
-    with patch("semble.chunking.core.get_parser") as get_parser:
-        chunks = chunk("rule = expression", "ebnf", 10)
-    assert chunks is None
-    get_parser.assert_not_called()
-
-
-def test_missing_bundle_fails_closed(caplog: pytest.LogCaptureFixture) -> None:
-    """Missing bundled grammars do not fall through to another package or downloader."""
-    with (
-        patch("semble.chunking.core.grammar_library_path", side_effect=OfflineAssetError("missing bundle")),
-        patch("semble.chunking.core.get_parser") as get_parser,
-        caplog.at_level(logging.ERROR, logger="semble.chunking.core"),
-    ):
-        parser = _cached_get_parser("python")
-    assert parser is None
-    assert "missing bundle" in caplog.text
-    get_parser.assert_not_called()
+def test_unsupported_platform_error() -> None:
+    """Test that chunk returns None when the current platform has no bundled grammars."""
+    with patch("semble.chunking.core.get_parser", side_effect=UnsupportedPlatformError):
+        chunks = chunk("x = 1", "python", 10)
+        assert chunks is None
 
 
 def test_chunker_deep_string(caplog: pytest.LogCaptureFixture) -> None:
@@ -161,3 +159,45 @@ def test_chunker_deep_string(caplog: pytest.LogCaptureFixture) -> None:
         assert chunks is not None
         assert len(caplog.records) == 1
         assert "Recursion depth exceeded in chunk." in caplog.records[0].message
+
+
+def test_extras_take_precedence() -> None:
+    """The dedicated zsh extra overrides the dependency's bash alias."""
+    with (
+        patch("semble.chunking.core.get_bundled_parser") as extra,
+        patch("semble.chunking.core.get_parser") as upstream,
+    ):
+        assert _cached_get_parser("zsh") is extra.return_value
+    upstream.assert_not_called()
+
+
+def test_missing_extra_does_not_use_alias(caplog: pytest.LogCaptureFixture) -> None:
+    """A damaged dedicated extra is reported rather than replaced by an alias."""
+    with (
+        patch("semble.chunking.core.get_bundled_parser", side_effect=OfflineAssetError("missing bundle")),
+        patch("semble.chunking.core.get_parser") as upstream,
+    ):
+        assert _cached_get_parser("zsh") is None
+    assert "missing bundle" in caplog.text
+    upstream.assert_not_called()
+
+
+def test_zsh_uses_dedicated_grammar() -> None:
+    """Zsh expansion flags parse with the dedicated grammar instead of Bash."""
+    parser = _cached_get_parser("zsh")
+    assert parser is not None
+    assert parser.language.name == "zsh"
+    assert not parser.parse(b"print ${(@f)name}\n").root_node.has_error
+
+
+def test_cuda_chunks_start_at_kernel_boundaries() -> None:
+    """CUDA functions stay together instead of splitting at indented lines."""
+    source = "\n\n".join(
+        f"__global__ void kernel_{index}(float* values) {{\n"
+        "    int idx = threadIdx.x;\n"
+        "    values[idx] = values[idx] * 2.0f;\n}"
+        for index in range(30)
+    )
+    chunks = chunk_source(source, "kernels.cu", "cuda")
+    assert len(chunks) > 1
+    assert all(chunk.content.startswith("__global__ void kernel_") for chunk in chunks)

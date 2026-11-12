@@ -13,6 +13,7 @@ from semble._offline import (
     AssetCheck,
     OfflineAssetError,
     bundled_grammar_languages,
+    get_bundled_parser,
     load_asset_manifest,
     validate_bundled_assets,
 )
@@ -75,47 +76,48 @@ def _platform_checks(manifest: dict[str, Any] | None = None) -> list[AssetCheck]
     return checks
 
 
+def _extra_parser_check(language: str) -> AssetCheck:
+    """Load and exercise one dedicated extra grammar."""
+    try:
+        parser = get_bundled_parser(language)
+        if parser is None:
+            raise OfflineAssetError("unavailable")
+        parser.parse(b"")
+    except Exception as error:
+        return AssetCheck(f"extra: {language}", False, str(error))
+    return AssetCheck(f"extra: {language}", True, "loaded locally")
+
+
 def _parser_checks(full: bool) -> list[AssetCheck]:
-    """Exercise one or every bundled parser."""
-    from semble.chunking.core import _cached_get_parser
+    """Exercise every extra and directly test extraction of dependency grammars."""
+    import semble_grammars
 
-    if full:
-        failures: list[str] = []
+    try:
+        extras = bundled_grammar_languages()
+    except OfflineAssetError as error:
+        return [AssetCheck("bundled extra parsers", False, str(error))]
+    checks = [_extra_parser_check(language) for language in extras]
+
+    try:
+        languages = semble_grammars.available_languages()
+    except Exception as error:
+        return [*checks, AssetCheck("semble-grammars", False, str(error))]
+    checks.append(AssetCheck("semble-grammars", True, f"{semble_grammars.__version__}; {len(languages)} languages"))
+    failures: list[str] = []
+    selected = languages if full else ["python"]
+    for language in selected:
         try:
-            languages = bundled_grammar_languages()
-        except OfflineAssetError as error:
-            return [AssetCheck("all grammar parsers", False, str(error))]
-        for language in languages:
-            try:
-                parser = _cached_get_parser(language)  # type: ignore[arg-type]
-                if parser is None:
-                    failures.append(f"{language} (unavailable)")
-                else:
-                    parser.parse(b"")
-            except Exception as error:
-                failures.append(f"{language} ({error})")
-        failure_detail = f"failed: {', '.join(failures[:8])}"
-        if len(failures) > 8:
-            failure_detail += f" (+{len(failures) - 8} more)"
-        parser_checks = [
-            AssetCheck(
-                "all grammar parsers",
-                not failures,
-                f"{len(languages)} loaded locally" if not failures else failure_detail,
-            )
-        ]
-    else:
-        try:
-            parser = _cached_get_parser("python")
-            if parser is not None:
-                parser.parse(b"")
+            # Call the dependency directly: the chunker's fallback hides cache write failures.
+            semble_grammars.get_parser(language).parse(b"")
         except Exception as error:
-            parser_checks = [AssetCheck("parser: python", False, str(error))]
-        else:
-            detail = "loaded locally" if parser is not None else "unavailable"
-            parser_checks = [AssetCheck("parser: python", parser is not None, detail)]
-
-    return parser_checks
+            failures.append(f"{language} ({error})")
+    detail = f"{len(selected)} extracted and loaded locally"
+    if failures:
+        detail = f"failed: {', '.join(failures[:8])}"
+        if len(failures) > 8:
+            detail += f" (+{len(failures) - 8} more)"
+    checks.append(AssetCheck("semble-grammars parsers", not failures, detail))
+    return checks
 
 
 def _model_check() -> AssetCheck:

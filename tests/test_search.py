@@ -1,18 +1,30 @@
+import logging
 from typing import Any
 from unittest.mock import MagicMock, call, patch
 
-import bm25s
 import numpy as np
 import numpy.typing as npt
 import pytest
+from huggingface_hub.errors import LocalEntryNotFoundError
 from model2vec import StaticModel
 from vicinity.backends.basic import BasicArgs
 
+from semble.index.bm25 import BM25
 from semble.index.dense import SelectableBasicBackend, embed_chunks, load_model
 from semble.search import _search_bm25, _search_semantic, _sort_top_k, search
 from semble.tokens import tokenize
 from semble.types import Chunk
 from tests.conftest import make_chunk
+
+
+def _build_bm25(chunks: list[Chunk]) -> BM25:
+    """Build a BM25 index over chunks, keyed by their position."""
+    index = BM25.empty()
+    doc_ids = [f"c{i}" for i in range(len(chunks))]
+    for doc_id, chunk in zip(doc_ids, chunks):
+        index.add_document(doc_id, tokenize(chunk.content))
+    index.set_doc_order(doc_ids)
+    return index
 
 
 @pytest.fixture
@@ -37,11 +49,9 @@ def embeddings(chunks: list[Chunk]) -> npt.NDArray[np.float32]:
 
 
 @pytest.fixture
-def bm25(chunks: list[Chunk]) -> bm25s.BM25:
+def bm25(chunks: list[Chunk]) -> BM25:
     """Pre-built BM25 index over the chunks fixture."""
-    index = bm25s.BM25()
-    index.index([tokenize(chunk.content) for chunk in chunks], show_progress=False)
-    return index
+    return _build_bm25(chunks)
 
 
 @pytest.fixture
@@ -50,7 +60,7 @@ def semantic(embeddings: npt.NDArray[np.float32]) -> SelectableBasicBackend:
     return SelectableBasicBackend(embeddings, BasicArgs())
 
 
-def test_search_bm25(bm25: bm25s.BM25, chunks: list[Chunk]) -> None:
+def test_search_bm25(bm25: BM25, chunks: list[Chunk]) -> None:
     """search_bm25: returns most relevant chunk first; selector restricts to given indices."""
     results = _search_bm25("authenticate token", bm25, chunks, top_k=4, selector=None)
     assert len(results) > 0
@@ -62,8 +72,8 @@ def test_search_bm25(bm25: bm25s.BM25, chunks: list[Chunk]) -> None:
 
 
 @pytest.mark.parametrize("query", ["", "   ", "\n\n", "zzzznonexistentterm"])
-def test_bm25_returns_empty_for_no_match(bm25: bm25s.BM25, chunks: list[Chunk], query: str) -> None:
-    """Empty / whitespace-only / token-less queries return [] instead of crashing bm25s."""
+def test_bm25_returns_empty_for_no_match(bm25: BM25, chunks: list[Chunk], query: str) -> None:
+    """Empty / whitespace-only / token-less queries return [] instead of crashing."""
     assert _search_bm25(query, bm25, chunks, top_k=3, selector=None) == []
 
 
@@ -74,9 +84,7 @@ def test_semantic_search(semantic: SelectableBasicBackend, chunks: list[Chunk], 
     assert all(-1.0 <= r.score <= 1.0 for r in results)
 
 
-def test_search_hybrid(
-    chunks: list[Chunk], semantic: SelectableBasicBackend, bm25: bm25s.BM25, mock_model: Any
-) -> None:
+def test_search_hybrid(chunks: list[Chunk], semantic: SelectableBasicBackend, bm25: BM25, mock_model: Any) -> None:
     """search_hybrid: returns combined results; identical content in different files produces separate results."""
     results = search("authenticate token", mock_model, semantic, bm25, chunks, top_k=3)
     assert len(results) > 0
@@ -91,8 +99,7 @@ def test_search_hybrid(
     embs /= np.linalg.norm(embs, axis=1, keepdims=True) + 1e-8
 
     sem_index = SelectableBasicBackend(embs, BasicArgs())
-    bm25_index = bm25s.BM25()
-    bm25_index.index([tokenize(c.content) for c in all_chunks], show_progress=False)
+    bm25_index = _build_bm25(all_chunks)
 
     deduped = search("helper", mock_model, sem_index, bm25_index, all_chunks, top_k=5)
     result_locations = {r.chunk.file_path for r in deduped}
@@ -114,7 +121,7 @@ def test_search_source_labels(
     top_k: int,
     chunks: list[Chunk],
     semantic: SelectableBasicBackend,
-    bm25: bm25s.BM25,
+    bm25: BM25,
     mock_model: Any,
 ) -> None:
     """Each result carries a source label matching the search mode used."""
@@ -155,6 +162,35 @@ def test_load_model(model_path: str | None, expected_call_arg: str, incomplete_c
     if incomplete_cache:
         expected_calls.append(call(expected_call_arg, force_download=True))
     assert mock_fp.call_args_list == expected_calls
+
+
+def test_load_model_unreachable_hub_raises_helpful_error() -> None:
+    """An unreachable Hub surfaces the model name and host instead of a generic Hub error."""
+    with patch("semble.index.dense.StaticModel.from_pretrained", side_effect=LocalEntryNotFoundError("offline")):
+        with pytest.raises(RuntimeError, match="huggingface.co"):
+            load_model("offline/model")
+
+
+@pytest.mark.parametrize(
+    ("message", "shown"),
+    [
+        (
+            "Warning: You are sending unauthenticated requests to the HF Hub. "
+            "Please set a HF_TOKEN to enable higher rate limits and faster downloads.",
+            False,
+        ),
+        ("Rate limited. Waiting 1s before retry [Retry 1/5].", True),
+        ("Your HF_TOKEN expires soon.", True),
+    ],
+)
+def test_load_model_hides_only_unauthenticated_warning(
+    caplog: pytest.LogCaptureFixture, message: str, shown: bool
+) -> None:
+    """Loading the model hides the Hub's unauthenticated-request nag but keeps other Hub warnings."""
+    with patch("semble.index.dense.StaticModel.from_pretrained"):
+        load_model(f"filter/test-{shown}")
+    logging.getLogger("huggingface_hub.utils._http").warning(message)
+    assert (message in caplog.text) is shown
 
 
 def test_embed_chunks_empty_returns_empty_array(mock_model: Any) -> None:

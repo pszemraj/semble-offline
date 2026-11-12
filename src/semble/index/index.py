@@ -6,23 +6,27 @@ import tempfile
 import warnings
 from collections import defaultdict
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
 import orjson
-from bm25s import BM25
 from model2vec.model import StaticModel
+from vicinity.backends.basic import BasicArgs
 
-from semble.cache import get_validated_cache
+from semble.cache import get_validated_cache, load_previous_for_incremental
+from semble.chunking.chunking import _DESIRED_CHUNK_LENGTH_CHARS
+from semble.index.bm25 import BM25
 from semble.index.create import create_index_from_path
 from semble.index.dense import SelectableBasicBackend, load_model
 from semble.index.files import read_file_text
-from semble.index.types import PersistencePath
+from semble.index.types import CACHE_FORMAT_VERSION, FileManifestEntry, PersistencePath, PreviousIndex
 from semble.search import _search_semantic, search
 from semble.stats import save_search_stats
 from semble.types import CallType, Chunk, ContentType, IndexStats, SearchResult
+from semble.utils import is_git_url
 
 _GIT_CLONE_TIMEOUT = int(os.environ.get("SEMBLE_CLONE_TIMEOUT", 60))
 _DEFAULT_CONTENT: tuple[ContentType, ...] = (ContentType.CODE,)
@@ -60,6 +64,7 @@ class SembleIndex:
         root: Path | None = None,
         content: ContentType | Sequence[ContentType] = _DEFAULT_CONTENT,
         loaded_from_disk: bool = False,
+        manifest: dict[str, FileManifestEntry] | None = None,
     ) -> None:
         """Initialize a SembleIndex. Should be created with from_path or from_git.
 
@@ -71,6 +76,7 @@ class SembleIndex:
         :param root: Root directory used to read file sizes for token-savings stats.
         :param content: Content type used when indexing; controls the search pipeline.
         :param loaded_from_disk: Whether the index was loaded from disk (cache hit); controls CLI messaging.
+        :param manifest: File modification times and chunk ranges used for incremental reindexing.
         """
         self.model = model
         self.chunks: list[Chunk] = chunks
@@ -82,6 +88,8 @@ class SembleIndex:
         self._file_sizes: dict[str, int] = self._compute_file_sizes(root) if root else {}
         self._file_mapping, self._language_mapping = self._populate_mapping()
         self.loaded_from_disk: bool = loaded_from_disk
+        self._manifest: dict[str, FileManifestEntry] = manifest or {}
+        self.sources: dict[str, str] = {}  # repo label -> source, only set on indexes built by merge()
 
     def _populate_mapping(self) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
         """Build (file → chunk indices, language → chunk indices) mappings, in that order."""
@@ -110,16 +118,16 @@ class SembleIndex:
     @property
     def stats(self) -> IndexStats:
         """Stats of an index."""
-        language_counts: dict[str, int] = defaultdict(int)
-        for chunk in self.chunks:
-            if chunk.language:
-                language_counts[chunk.language] += 1
-
         return IndexStats(
             indexed_files=len(self._file_mapping),
             total_chunks=len(self.chunks),
-            languages=dict(language_counts),
+            languages={language: len(ids) for language, ids in self._language_mapping.items()},
         )
+
+    @property
+    def content(self) -> tuple[ContentType, ...]:
+        """Return the content types covered by this index."""
+        return self._content
 
     @classmethod
     def from_path(
@@ -128,6 +136,7 @@ class SembleIndex:
         content: ContentType | Sequence[ContentType] = _DEFAULT_CONTENT,
         include_text_files: bool | None = None,
         model_path: str | None = None,
+        show_progress_bar: bool = False,
     ) -> SembleIndex:
         """Create and index a SembleIndex from a directory.
 
@@ -135,6 +144,7 @@ class SembleIndex:
         :param content: Content types to index, e.g. ContentType.CODE or [ContentType.CODE, ContentType.DOCS].
         :param include_text_files: Deprecated. Pass a content sequence directly instead.
         :param model_path: Path to the model to use. If None, the default model will be used.
+        :param show_progress_bar: Show a progress bar while indexing.
         :return: An indexed SembleIndex. Chunk file paths are relative to ``path``.
         :raises FileNotFoundError: If `path` does not exist.
         :raises NotADirectoryError: If `path` exists but is not a directory.
@@ -152,14 +162,55 @@ class SembleIndex:
         model, model_path = load_model(model_path)
 
         path = path.resolve()
-        bm25, vicinity, chunks = create_index_from_path(
-            path,
-            model=model,
-            content=normalized,
-            display_root=path,
-        )
+        previous = load_previous_for_incremental(str(path), model_path, normalized)
+        return _build(path, model, model_path, normalized, show_progress_bar, previous)
 
-        return SembleIndex(model, bm25, vicinity, chunks, model_path, root=path, content=normalized)
+    @classmethod
+    def merge(cls, indexes: Sequence[tuple[str, SembleIndex]]) -> SembleIndex:
+        """Merge indexes built from several repos into one that searches them together.
+
+        :param indexes: (source, index) pairs, where source is the local path or git URL the index was built from.
+        :return: A new in-memory index over all chunks.
+        :raises ValueError: If the indexes were built with different models, or the same repo is passed twice.
+        """
+        if len({index._model_path for _, index in indexes}) != 1:
+            raise ValueError("Indexes to merge must be built with the same model.")
+        normalized = [(s if is_git_url(s) else str(Path(s).expanduser().resolve()), index) for s, index in indexes]
+        # Sort by resolved source so the same set of repos always gets the same labels, whatever the argument order.
+        resolved = sorted(normalized, key=lambda pair: pair[0])
+        sources = [source for source, _ in resolved]
+        if duplicates := sorted({source for source in sources if sources.count(source) > 1}):
+            raise ValueError(f"The same repo was passed more than once: {duplicates}")
+        labels: list[str] = []
+        for source in sources:
+            name = label = Path(source).name.removesuffix(".git")
+            suffix = 2
+            while label in labels:  # another repo already has this name, append a suffix
+                label = f"{name}-{suffix}"
+                suffix += 1
+            labels.append(label)
+        parts = [(label, index) for label, (_, index) in zip(labels, resolved)]
+
+        chunks = [
+            replace(chunk, file_path=f"{label}/{chunk.file_path}") for label, index in parts for chunk in index.chunks
+        ]
+        bm25 = BM25.merge([(label, index._bm25_index) for label, index in parts])
+        vectors = np.vstack([index._semantic_index.vectors for _, index in parts])
+
+        first = parts[0][1]
+        merged = cls(
+            first.model,
+            bm25,
+            SelectableBasicBackend(vectors, BasicArgs()),
+            chunks,
+            first._model_path,
+            content=first.content,
+        )
+        merged.sources = dict(zip(labels, sources))
+        merged._file_sizes = {
+            f"{label}/{path}": size for label, index in parts for path, size in index._file_sizes.items()
+        }
+        return merged
 
     @classmethod
     def from_git(
@@ -169,6 +220,7 @@ class SembleIndex:
         model_path: str | None = None,
         content: ContentType | Sequence[ContentType] = _DEFAULT_CONTENT,
         include_text_files: bool | None = None,
+        show_progress_bar: bool = False,
     ) -> SembleIndex:
         """Clone a git repository and index it.
 
@@ -182,6 +234,7 @@ class SembleIndex:
         :param model_path: Path to the model to use. If None, the default model will be used.
         :param content: Content types to index, e.g. (ContentType.CODE,) or (ContentType.CODE, ContentType.DOCS).
         :param include_text_files: Deprecated. Pass content=(ContentType.CODE, ContentType.DOCS, ...) instead.
+        :param show_progress_bar: Show a progress bar while indexing.
         :return: An indexed SembleIndex. Chunk file paths are repo-relative (e.g. ``src/foo.py``).
         :raises RuntimeError: If git is not on PATH, the clone fails, or times out.
         """
@@ -206,23 +259,7 @@ class SembleIndex:
                 raise RuntimeError(f"git clone failed for {url!r}:\n{result.stderr.strip()}")
 
             model, model_path = load_model(model_path)
-            resolved_path = Path(tmp_dir).resolve()
-            bm25, vicinity, chunks = create_index_from_path(
-                resolved_path,
-                model=model,
-                content=normalized,
-                display_root=resolved_path,
-            )
-
-            return SembleIndex(
-                model,
-                bm25,
-                vicinity,
-                chunks,
-                model_path,
-                root=resolved_path,
-                content=normalized,
-            )
+            return _build(Path(tmp_dir).resolve(), model, model_path, normalized, show_progress_bar)
 
     def find_related(
         self, source: Chunk | SearchResult, *, top_k: int = 5, max_snippet_lines: int | None = None
@@ -310,19 +347,25 @@ class SembleIndex:
             missing = ", ".join(str(p) for p in non_existent)
             raise FileNotFoundError(f"Index not found at {path}. Missing: {missing}")
 
-        bm_25_index = BM25.load(persistence_paths.bm25_index)
-        semantic_index = SelectableBasicBackend.load(persistence_paths.semantic_index)
-        with open(persistence_paths.metadata, "rb") as f:
-            metadata = orjson.loads(f.read())
-        with open(persistence_paths.chunks, "rb") as f:
-            chunk_data = orjson.loads(f.read())
+        metadata = orjson.loads(persistence_paths.metadata.read_bytes())
+        found_version = metadata.get("cache_version")
+        if found_version != CACHE_FORMAT_VERSION:
+            raise ValueError(
+                f"Unsupported index format {found_version!r}; expected {CACHE_FORMAT_VERSION}. "
+                "Rebuild it with SembleIndex.from_path(<source directory>) before searching again."
+            )
 
-        chunks = []
-        for chunk_item in chunk_data:
-            chunks.append(Chunk.from_dict(chunk_item))
+        bm25_index = BM25.load(persistence_paths.bm25_index)
+        semantic_index = SelectableBasicBackend.load(persistence_paths.semantic_index)
+        chunks = [Chunk.from_dict(item) for item in orjson.loads(persistence_paths.chunks.read_bytes())]
+        if not (len(chunks) == len(bm25_index.doc_order) == semantic_index.vectors.shape[0]):
+            raise ValueError("Persisted index components have inconsistent document counts")
         root_path = metadata["root_path"]
         model_path = metadata["model_path"]
         content = tuple(ContentType(s) for s in metadata.get("content_type", ["code"]))
+        manifest = {
+            indexed_path: FileManifestEntry(**entry) for indexed_path, entry in metadata.get("files", {}).items()
+        }
         if root_path:
             root_path = Path(root_path)
 
@@ -330,13 +373,14 @@ class SembleIndex:
 
         return cls(
             model,
-            bm_25_index,
+            bm25_index,
             semantic_index,
             chunks,
             model_path,
             root=root_path,
             content=content,
             loaded_from_disk=True,
+            manifest=manifest,
         )
 
     def save(self, path: Path | str) -> None:
@@ -348,11 +392,7 @@ class SembleIndex:
 
         self._bm25_index.save(persistence_paths.bm25_index)
         self._semantic_index.save(persistence_paths.semantic_index)
-        chunks_as_dict = [chunk.to_dict() for chunk in self.chunks]
-        with open(persistence_paths.chunks, "wb") as f:
-            data = orjson.dumps(chunks_as_dict)
-            f.write(data)
-        from semble.chunking.chunking import _DESIRED_CHUNK_LENGTH_CHARS  # avoid circular import at module level
+        persistence_paths.chunks.write_bytes(orjson.dumps(self.chunks))
 
         root_str = None if self._root is None else str(self._root)
         metadata = {
@@ -360,9 +400,25 @@ class SembleIndex:
             "time": datetime.now().timestamp(),
             "model_path": self._model_path,
             "content_type": list(x.value for x in self._content),
-            "file_paths": sorted(self._file_mapping),
             "chunk_size": _DESIRED_CHUNK_LENGTH_CHARS,
+            "cache_version": CACHE_FORMAT_VERSION,
+            "files": self._manifest,
         }
-        with open(persistence_paths.metadata, "wb") as f:
-            data = orjson.dumps(metadata)
-            f.write(data)
+        persistence_paths.metadata.write_bytes(orjson.dumps(metadata))
+
+
+def _build(
+    path: Path,
+    model: StaticModel,
+    model_path: str,
+    content: tuple[ContentType, ...],
+    show_progress_bar: bool,
+    previous: PreviousIndex | None = None,
+) -> SembleIndex:
+    """Index a resolved directory, storing chunk paths relative to it."""
+    bm25_index, semantic_index, chunks, manifest = create_index_from_path(
+        path, model=model, content=content, display_root=path, previous=previous, show_progress_bar=show_progress_bar
+    )
+    return SembleIndex(
+        model, bm25_index, semantic_index, chunks, model_path, root=path, content=content, manifest=manifest
+    )

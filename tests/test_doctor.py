@@ -83,15 +83,44 @@ def test_full_parser_checks_report_unreadable_source_manifest() -> None:
     """An unreadable grammar source manifest becomes a failed diagnostic check."""
     with patch("semble.doctor.bundled_grammar_languages", side_effect=OfflineAssetError("cannot read grammar sources")):
         checks = _parser_checks(full=True)
-    assert checks == [AssetCheck("all grammar parsers", False, "cannot read grammar sources")]
+    assert checks == [AssetCheck("bundled extra parsers", False, "cannot read grammar sources")]
 
 
 def test_full_parser_checks_report_omitted_failure_count() -> None:
-    """A broad parser failure reports how many details were omitted."""
+    """A broad dependency parser failure reports omitted details."""
     languages = [f"language_{index}" for index in range(10)]
     with (
-        patch("semble.doctor.bundled_grammar_languages", return_value=languages),
-        patch("semble.chunking.core._cached_get_parser", return_value=None),
+        patch("semble.doctor.bundled_grammar_languages", return_value=[]),
+        patch("semble_grammars.available_languages", return_value=languages),
+        patch("semble_grammars.get_parser", side_effect=PermissionError("cache is not writable")),
     ):
         checks = _parser_checks(full=True)
-    assert checks[0].detail.endswith(" (+2 more)")
+    assert checks[-1].detail.endswith(" (+2 more)")
+    assert not checks[-1].ok
+
+
+def test_parser_checks_detect_dependency_extraction_failure() -> None:
+    """Default diagnostics expose extraction failures hidden by chunking fallback."""
+    with (
+        patch("semble.doctor.bundled_grammar_languages", return_value=[]),
+        patch("semble_grammars.get_parser", side_effect=PermissionError("cache is not writable")),
+        patch("semble.chunking.core._cached_get_parser") as chunker,
+    ):
+        checks = _parser_checks(full=False)
+    assert not checks[-1].ok
+    assert "cache is not writable" in checks[-1].detail
+    chunker.assert_not_called()
+
+
+def test_full_parser_checks_load_each_source() -> None:
+    """Full diagnostics load both extras and every canonical dependency language."""
+    with (
+        patch("semble.doctor.bundled_grammar_languages", return_value=["cuda", "zsh"]),
+        patch("semble.doctor.get_bundled_parser") as extra,
+        patch("semble_grammars.available_languages", return_value=["python", "bash"]),
+        patch("semble_grammars.get_parser") as upstream,
+    ):
+        checks = _parser_checks(full=True)
+    assert all(check.ok for check in checks)
+    assert [call.args[0] for call in extra.call_args_list] == ["cuda", "zsh"]
+    assert [call.args[0] for call in upstream.call_args_list] == ["python", "bash"]

@@ -1,13 +1,15 @@
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import orjson
 import pytest
 from model2vec import StaticModel
 
 from semble import SembleIndex
 from semble.index.create import create_index_from_path
-from semble.index.files import _MAX_FILE_BYTES, FileStatus, get_file_status
+from semble.index.files import FileStatus, get_file_status
 from semble.types import ContentType
 from tests.conftest import make_chunk
 
@@ -31,7 +33,7 @@ def test_index_markdown_inclusion(
     mock_model: StaticModel, tmp_project: Path, content: list[ContentType], md_in_results: bool
 ) -> None:
     """Markdown files are excluded for code-only and included when docs is requested."""
-    _, _, chunks = create_index_from_path(tmp_project, mock_model, content=content)
+    _, _, chunks, _ = create_index_from_path(tmp_project, mock_model, content=content)
     has_md = ".md" in {Path(c.file_path).suffix for c in chunks}
     assert has_md is md_in_results
 
@@ -57,7 +59,7 @@ def test_from_git_include_text_files_deprecated(mock_model: Any, tmp_project: Pa
     with patch("semble.index.index.load_model", return_value=(mock_model, "")):
         with patch("subprocess.run", return_value=fake_result):
             with patch("semble.index.index.create_index_from_path") as mock_create:
-                mock_create.return_value = (MagicMock(), MagicMock(), [make_chunk("x = 1", "f.py")])
+                mock_create.return_value = (MagicMock(), MagicMock(), [make_chunk("x = 1", "f.py")], {})
                 with pytest.warns(DeprecationWarning, match="include_text_files is deprecated"):
                     SembleIndex.from_git("https://example.com/repo", include_text_files=True)
 
@@ -68,23 +70,79 @@ def test_index_empty_returns_zero_chunks(mock_model: StaticModel, tmp_path: Path
         create_index_from_path(tmp_path, mock_model)
 
 
-def test_oversized_file_is_skipped(mock_model: StaticModel, tmp_path: Path) -> None:
-    """Files exceeding _MAX_FILE_BYTES are silently skipped during indexing."""
-    (tmp_path / "big.py").write_bytes(b"x" * (_MAX_FILE_BYTES + 1))
-    with pytest.raises(ValueError):  # no indexable content remains
-        create_index_from_path(tmp_path, mock_model)
+@pytest.mark.parametrize(("max_file_bytes", "indexed"), [(1_000, False), (10_000, True)])
+def test_max_file_bytes(
+    mock_model: StaticModel,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    max_file_bytes: int,
+    indexed: bool,
+) -> None:
+    """Files over MAX_FILE_BYTES are skipped with a warning naming them; files under it are indexed."""
+    monkeypatch.setattr("semble.index.files.MAX_FILE_BYTES", max_file_bytes)
+    (tmp_path / "small.py").write_text("def f():\n    return 1\n")
+    (tmp_path / "big.py").write_bytes(b"x = 1\n" + b"#" * 5_000)
+    with caplog.at_level(logging.WARNING, logger="semble.index.create"):
+        _, _, chunks, _ = create_index_from_path(tmp_path, mock_model)
+    assert any(chunk.file_path.endswith("big.py") for chunk in chunks) is indexed
+    assert ("big.py" in caplog.text) is not indexed
 
 
 def test_tiny_invalid_utf8_file_status_does_not_crash(tmp_path: Path) -> None:
     """Tiny files with invalid UTF-8 bytes are treated as non-empty."""
     path = tmp_path / "latin1.py"
     path.write_bytes(b"\xff")
-    assert get_file_status(path, None) is FileStatus.VALID
+    assert get_file_status(path, path.stat()) is FileStatus.VALID
+
+
+def test_merge(mock_model: Any, tmp_project: Path, tmp_path_factory: pytest.TempPathFactory) -> None:
+    """A merged index prefixes paths per repo, records sources, and searches both repos at once."""
+    other = tmp_path_factory.mktemp("other")
+    (other / "client.py").write_text("def call_login(password):\n    return http_post('/login', password)\n")
+    with patch("semble.index.index.load_model", return_value=(mock_model, "")):
+        parts = [(str(tmp_project), SembleIndex.from_path(tmp_project)), (str(other), SembleIndex.from_path(other))]
+    merged = SembleIndex.merge(parts)
+
+    main, side = tmp_project.name, other.name
+    assert merged.sources == {main: str(tmp_project), side: str(other)}
+    assert {c.file_path for c in merged.chunks} == {f"{main}/auth.py", f"{main}/utils.py", f"{side}/client.py"}
+    assert {r.chunk.file_path for r in merged.search("login password", top_k=5)} >= {
+        f"{main}/auth.py",
+        f"{side}/client.py",
+    }
+    seed = next(c for c in merged.chunks if c.file_path == f"{side}/client.py")
+    assert all(r.chunk.file_path.startswith(main) for r in merged.find_related(seed, top_k=5))
+
+
+def test_merge_labels(indexed_index: SembleIndex) -> None:
+    """Labels are the repo name in sorted source order, so they do not depend on argument order; repeats get -N."""
+    url = "https://github.com/org/repo.git"
+    a, b, c, d, e = (str(Path(p).resolve()) for p in ("/a/repo", "/b/repo", "/c/repo-2", "/d/repo", "/e/other"))
+    sources = [url, d, c, e, a, b]
+    merged = SembleIndex.merge([(source, indexed_index) for source in sources])
+    assert merged.sources == {"repo": a, "repo-2": b, "repo-2-2": c, "repo-3": d, "other": e, "repo-4": url}
+    assert SembleIndex.merge([(source, indexed_index) for source in reversed(sources)]).sources == merged.sources
+
+
+@pytest.mark.parametrize(
+    ("second", "match"),
+    [
+        (("/x/b", MagicMock(_model_path="/other/model")), "same model"),
+        (("/x/a/../a", MagicMock(_model_path="")), "more than once"),
+    ],
+    ids=["different_model", "same_repo_twice"],
+)
+def test_merge_rejects_invalid_parts(indexed_index: SembleIndex, second: tuple[str, SembleIndex], match: str) -> None:
+    """Merging refuses indexes from different models and the same repo passed under two spellings."""
+    with pytest.raises(ValueError, match=match):
+        SembleIndex.merge([("/x/a", indexed_index), second])
 
 
 def test_index_language_counts(indexed_index: SembleIndex) -> None:
     """Language breakdown in stats includes python with at least one chunk."""
     stats = indexed_index.stats
+    assert indexed_index.content == (ContentType.CODE,)
     assert "python" in stats.languages
     assert stats.languages["python"] > 0
 
@@ -154,16 +212,17 @@ def test_search_empty_query_returns_empty(indexed_index: SembleIndex, query: str
     ("disk_files", "chunk_paths", "expected"),
     [
         ({"foo.py": "hello world"}, ["foo.py", "foo.py"], {"foo.py": 11}),
+        ({"unicode.py": "你好\n"}, ["unicode.py"], {"unicode.py": 3}),
         ({}, ["nonexistent.py"], {}),
     ],
-    ids=["dedup-same-file", "missing-file-skipped"],
+    ids=["dedup-same-file", "unicode-characters", "missing-file-skipped"],
 )
 def test_compute_file_sizes(
     tmp_path: Path, disk_files: dict[str, str], chunk_paths: list[str], expected: dict[str, int]
 ) -> None:
-    """_compute_file_sizes deduplicates paths and silently skips missing files."""
+    """File sizes count characters, deduplicate paths, and skip missing files."""
     for name, content in disk_files.items():
-        (tmp_path / name).write_text(content)
+        (tmp_path / name).write_text(content, encoding="utf-8")
     index = SembleIndex.__new__(SembleIndex)
     index.chunks = [make_chunk("c", p) for p in chunk_paths]
     assert index._compute_file_sizes(tmp_path) == expected
@@ -186,7 +245,9 @@ def test_find_related(indexed_index: SembleIndex) -> None:
 
 def test_roundtrip(tmp_path: Path, indexed_index: SembleIndex) -> None:
     """Test that saving and loading a folder leads to the same data."""
+    assert indexed_index.chunks[0].to_dict()["location"] == indexed_index.chunks[0].location
     indexed_index.save(tmp_path)
+    assert "location" not in orjson.loads((tmp_path / "chunks.json").read_bytes())[0]
     with patch.object(StaticModel, "from_pretrained"):
         index_2 = SembleIndex.load_from_disk(tmp_path)
     assert index_2.chunks == indexed_index.chunks
@@ -194,7 +255,7 @@ def test_roundtrip(tmp_path: Path, indexed_index: SembleIndex) -> None:
 
 
 def test_load_save_roundtrip_preserves_manifest(tmp_path: Path, indexed_index: SembleIndex) -> None:
-    """load_from_disk followed by save must not clobber file_paths with an empty list."""
+    """load_from_disk followed by save must preserve the incremental manifest."""
     save_a = tmp_path / "a"
     save_b = tmp_path / "b"
     indexed_index.save(save_a)
@@ -203,8 +264,8 @@ def test_load_save_roundtrip_preserves_manifest(tmp_path: Path, indexed_index: S
     loaded.save(save_b)
     import json
 
-    manifest_a = json.loads((save_a / "metadata.json").read_text())["file_paths"]
-    manifest_b = json.loads((save_b / "metadata.json").read_text())["file_paths"]
+    manifest_a = json.loads((save_a / "metadata.json").read_text())["files"]
+    manifest_b = json.loads((save_b / "metadata.json").read_text())["files"]
     assert manifest_b == manifest_a
     assert len(manifest_b) > 0
 
@@ -232,6 +293,28 @@ def test_load_from_disk_missing_files_reports_them(tmp_path: Path) -> None:
     assert "metadata.json" in error_msg
     # The file we did create should NOT be listed as missing.
     assert "chunks.json" not in error_msg
+
+
+@pytest.mark.parametrize(
+    ("corruption", "message"),
+    [("version", "SembleIndex.from_path"), ("counts", "inconsistent document counts")],
+)
+def test_load_from_disk_rejects_incompatible_state(
+    corruption: str, message: str, tmp_path: Path, indexed_index: SembleIndex
+) -> None:
+    """Incompatible persistence metadata and component counts are rejected."""
+    indexed_index.save(tmp_path)
+    if corruption == "version":
+        path = tmp_path / "metadata.json"
+        data = orjson.loads(path.read_bytes())
+        del data["cache_version"]
+    else:
+        path = tmp_path / "chunks.json"
+        data = orjson.loads(path.read_bytes())[:-1]
+    path.write_bytes(orjson.dumps(data))
+
+    with pytest.raises(ValueError, match=message):
+        SembleIndex.load_from_disk(tmp_path)
 
 
 def test_from_path_uses_cache_when_valid(tmp_project: Path) -> None:

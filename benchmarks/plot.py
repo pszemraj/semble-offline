@@ -25,7 +25,7 @@ _METHODS: list[_Method] = [
         "name": "ripgrep",
         "ndcg10": 0.126,
         "index_ms": 0.0,  # no persistent index; scans on the fly
-        "query_p50_ms": 12.08,
+        "query_p50_ms": 14.46,
         "color": "#606060",
         "params_m": 0,
     },
@@ -38,18 +38,50 @@ _METHODS: list[_Method] = [
         "params_m": 0,
     },
     {
+        "name": "cs",
+        "ndcg10": 0.1997,
+        "index_ms": 0.0,  # no persistent index; scans on the fly
+        "query_p50_ms": 22.1,
+        "color": "#5aa9a3",
+        "params_m": 0,
+    },
+    {
+        "name": "codebase-memory-mcp",
+        "ndcg10": 0.6298,
+        "index_ms": 454.0,
+        "query_p50_ms": 46.3,
+        "color": "#a3a34a",
+        "params_m": 0,
+    },
+    {
+        "name": "ck",
+        "ndcg10": 0.642,
+        "index_ms": 95892.7,
+        "query_p50_ms": 187.0,
+        "color": "#4a7ba3",
+        "params_m": 33,
+    },
+    {
+        "name": "zvec-grep",
+        "ndcg10": 0.6701,
+        "index_ms": 3402.0,
+        "query_p50_ms": 391.09,
+        "color": "#c23b6e",
+        "params_m": 16,
+    },
+    {
         "name": "BM25",
         "ndcg10": 0.673,
-        "index_ms": 262.6,  # same semble index infrastructure; BM25 component adds negligible overhead
-        "query_p50_ms": 0.019,
+        "index_ms": 46.6,  # standalone BM25 build time, not shared with semble's dense index
+        "query_p50_ms": 0.17,  # standalone bm25_index.get_scores() + top-k sort, not hybrid search()
         "color": "#3a9e7e",
         "params_m": 0,
     },
     {
         "name": "ColGREP",
         "ndcg10": 0.6925,
-        "index_ms": 5750.6,
-        "query_p50_ms": 123.83,
+        "index_ms": 5359.0,
+        "query_p50_ms": 122.42,
         "color": "#e8a838",
         "params_m": 16,
     },
@@ -63,41 +95,32 @@ _METHODS: list[_Method] = [
     },
     {
         "name": "CodeRankEmbed",
-        "ndcg10": 0.7648,
-        "index_ms": 57269.4,
-        "query_p50_ms": 16.27,
+        "ndcg10": 0.8393,
+        "index_ms": 115859.8,
+        "query_p50_ms": 15.56,
         "color": "#d9634f",
         "params_m": 137,
     },
     {
-        "name": "CodeRankEmbed\nHybrid",
-        "ndcg10": 0.8617,
-        "index_ms": 57269.4,
-        "query_p50_ms": 16.27,
-        "color": "#922b21",
-        "params_m": 137,
-    },
-    {
         "name": "semble",
-        "ndcg10": 0.8544,
-        "index_ms": 262.6,
-        "query_p50_ms": 1.49,
+        "ndcg10": 0.8546,
+        "index_ms": 240.3,
+        "query_p50_ms": 0.69,
         "color": "#1a5fa8",
         "params_m": 16,
     },
 ]
 
-# Fixed label offset in cube-root(ms) space — gives a consistent visual gap at every x-position.
-# The warm plot spans ~0.01–500 ms so needs a much smaller delta than the cold plot (~100 ms–100 s).
-_CBRT_LABEL_DELTA_COLD = 2.0
-_CBRT_LABEL_DELTA_WARM = 0.2
+# Gap between a marker's edge and its label, in points. Offsetting from the edge (rather than in data
+# space) keeps the gap identical for every marker size, axis range and figure size.
+_LABEL_GAP_POINTS = 3.0
 
 # Frontier methods per mode.
-# Cold: incumbent prior-art curve (ripgrep → BM25 → ColGREP → CRE Hybrid); semble floats above it.
-# Warm: BM25 dominates ripgrep (faster and higher NDCG), so incumbent curve is BM25 → CRE Hybrid.
+# Cold: incumbent prior-art curve (ripgrep → BM25 → ColGREP → CodeRankEmbed); semble floats above it.
+# Warm: BM25 dominates ripgrep (faster and higher NDCG), so incumbent curve is BM25 → CodeRankEmbed.
 _FRONTIER_NAMES: dict[str, set[str]] = {
-    "cold": {"ripgrep", "BM25", "ColGREP", "CodeRankEmbed\nHybrid"},
-    "warm": {"BM25", "CodeRankEmbed\nHybrid"},
+    "cold": {"ripgrep", "BM25", "ColGREP", "CodeRankEmbed"},
+    "warm": {"BM25", "CodeRankEmbed"},
 }
 
 
@@ -132,9 +155,8 @@ def _make_plot(out_path: Path, *, warm: bool = False) -> None:
     :param warm: If True, use per-query latency (index pre-built). If False, use index + query latency.
     """
     mode = "warm" if warm else "cold"
-    cbrt_label_delta = _CBRT_LABEL_DELTA_WARM if warm else _CBRT_LABEL_DELTA_COLD
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(9, 5.6))
 
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
@@ -157,7 +179,7 @@ def _make_plot(out_path: Path, *, warm: bool = False) -> None:
             if m["name"] in _FRONTIER_NAMES[mode]
         ]
     )
-    xlim = (0.01, 500) if warm else (5, 200_000)
+    xlim = (0.01, 1_000) if warm else (5, 200_000)
     # Shade the incumbent zone: region below the frontier, closed to the plot edges.
     shade_xs = [xlim[0]] + [p[0] for p in frontier] + [xlim[1]]
     shade_ys = [frontier[0][1]] + [p[1] for p in frontier] + [frontier[-1][1]]
@@ -174,10 +196,11 @@ def _make_plot(out_path: Path, *, warm: bool = False) -> None:
     for m in _METHODS:
         x = m["query_p50_ms"] if warm else m["index_ms"] + m["query_p50_ms"]
         y = m["ndcg10"]
+        size = _marker_size(m["params_m"])
         ax.scatter(
             x,
             y,
-            s=_marker_size(m["params_m"]),
+            s=size,
             color=m["color"],
             marker="o",
             zorder=3,
@@ -185,12 +208,13 @@ def _make_plot(out_path: Path, *, warm: bool = False) -> None:
             edgecolors="white",
         )
 
-        x_label = (x ** (1 / 3) + cbrt_label_delta) ** 3
-        ax.text(
-            x_label,
-            y,
+        # scatter sizes are areas in points², so the marker's radius is half of sqrt(size).
+        ax.annotate(
             m["name"],
-            fontsize=8.5,
+            (x, y),
+            textcoords="offset points",
+            xytext=(size**0.5 / 2 + _LABEL_GAP_POINTS, 0),
+            fontsize=9.5,
             fontweight="bold" if m["name"] == "semble" else "normal",
             color=m["color"],
             ha="left",
@@ -204,8 +228,8 @@ def _make_plot(out_path: Path, *, warm: bool = False) -> None:
 
     ax.set_xlabel("Query latency", fontsize=10, color="#444444")
     if warm:
-        ax.set_xlim(0.01, 500)
-        ax.set_xticks([0.1, 1, 10, 100])
+        ax.set_xlim(0.01, 1_000)
+        ax.set_xticks([0.1, 1, 10, 100, 1_000])
         ax.set_title("Code search quality vs. latency (warm)", fontsize=12, color="#222222", pad=12)
     else:
         ax.set_xlim(5, 200_000)

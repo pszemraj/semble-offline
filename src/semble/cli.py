@@ -1,17 +1,24 @@
 import argparse
 import asyncio
+import io
 import json
+import logging
+import os
 import re
+import signal
 import sys
 import warnings
+from collections.abc import Iterator
 from importlib.util import find_spec
+from pathlib import Path
 from shutil import rmtree
 from typing import Literal
 
 from model2vec.utils import get_package_extras
 
-from semble.cache import find_index_from_cache_folder, resolve_cache_folder
+from semble.cache import cache_key, resolve_cache_folder, save_index_to_cache
 from semble.index import SembleIndex
+from semble.index.files import get_extensions
 from semble.index.types import PersistencePath
 from semble.installer.agents import AGENTS, IntegrationType
 from semble.stats import format_savings_report
@@ -20,30 +27,63 @@ from semble.utils import format_results, is_git_url, resolve_chunk
 from semble.version import __version__
 
 _CLI_DISPATCH_ARGS = frozenset(
-    {"search", "find-related", "install", "uninstall", "savings", "doctor", "-h", "--help", "-V", "--version", "clear"}
+    {
+        "search",
+        "find-related",
+        "file-types",
+        "doctor",
+        "install",
+        "uninstall",
+        "savings",
+        "-h",
+        "--help",
+        "clear",
+        "--version",
+        "-V",
+    }
 )
-_CLEAR_CHOICE = Literal["all", "index", "savings"]
+_CLEAR_CHOICE = Literal["all", "index", "savings", "orphans"]
 
 _SHA_256_REGEX = re.compile(r"^[a-f0-9]{64}$")
 
 
 def _build_index(path: str, content: list[ContentType]) -> SembleIndex:
-    """Build an index from a local path or git URL."""
+    """Build an index from a local path or git URL, showing a progress bar on a tty."""
+    show_progress_bar = sys.stderr.isatty()  # Only show the progress bar in a terminal
     return (
-        SembleIndex.from_git(path, content=content)
+        SembleIndex.from_git(path, content=content, show_progress_bar=show_progress_bar)
         if is_git_url(path)
-        else SembleIndex.from_path(path, content=content)
+        else SembleIndex.from_path(path, content=content, show_progress_bar=show_progress_bar)
     )
 
 
-def _maybe_save_index(index: SembleIndex, path: str) -> None:
-    """Save the index to the cache folder if it was not loaded from disk."""
-    if not index.loaded_from_disk:
+def _maybe_save_index(parts: list[tuple[str, SembleIndex]]) -> None:
+    """Save each freshly built (path, index) part to the cache folder under its path."""
+    for path, index in parts:
         try:
-            cache_folder = find_index_from_cache_folder(path)
-            index.save(cache_folder)
+            save_index_to_cache(index, path)
         except Exception as e:
             print(f"Error saving index: {e}", file=sys.stderr)
+
+
+def _add_query_args(p: argparse.ArgumentParser) -> None:
+    """Add the path, result-shaping, and content arguments shared by search and find-related."""
+    p.add_argument(
+        "path",
+        nargs="*",
+        default=["."],
+        help="Local paths or git URLs to search together (default: current directory).",
+    )
+    p.add_argument("-k", "--top-k", type=int, default=5, help="Number of results (default: 5).")
+    p.add_argument(
+        "--max-snippet-lines",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Lines of source per result (default: full chunk). 10 = signature + body, 0 = no code.",
+    )
+    p.add_argument("--format", choices=["json", "text"], default="json", help="Output format (default: json).")
+    _add_content_args(p)
 
 
 def _add_content_args(p: argparse.ArgumentParser) -> None:
@@ -54,7 +94,7 @@ def _add_content_args(p: argparse.ArgumentParser) -> None:
         default=["code"],
         choices=[ct.value for ct in ContentType] + ["all"],
         metavar="TYPE",
-        help="Content types to index (space-separated, e.g. --content code docs). Choices: code, docs, config, all. Default: code.",
+        help="Content types to search (space-separated, e.g. --content code docs). Choices: code, docs, config, all. Default: code.",
     )
     p.add_argument(
         "--include-text-files",
@@ -65,6 +105,12 @@ def _add_content_args(p: argparse.ArgumentParser) -> None:
 
 def main() -> None:
     """Entry point for the semble command-line tool."""
+    # Non-UTF-8 Windows consoles can't encode glyphs like "✓" and would otherwise crash.
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(errors="replace")
+    # Worker processes re-import __main__, so only guarded entry points like this one turn them on by default.
+    os.environ.setdefault("SEMBLE_INDEX_WORKERS", "4")
     if len(sys.argv) > 1 and sys.argv[1] in _CLI_DISPATCH_ARGS:
         _cli_main()
     else:
@@ -72,11 +118,18 @@ def main() -> None:
 
 
 def _mcp_main() -> None:
+    signal.signal(signal.SIGTERM, lambda *_: os._exit(0))
     parser = argparse.ArgumentParser(
         prog="semble",
         description="Instant local code search for agents.",
     )
     _add_content_args(parser)
+    parser.add_argument(
+        "--http",
+        action="store_true",
+        help="Serve over streamable HTTP on localhost instead of stdio, so several agents can share one server.",
+    )
+    parser.add_argument("--port", type=int, default=8000, help="Port for --http (default: 8000).")
     args = parser.parse_args()
     if any(find_spec(dep) is None for dep in get_package_extras("semble", "mcp")):
         print(
@@ -87,7 +140,9 @@ def _mcp_main() -> None:
     from semble.mcp import serve
 
     content = _resolve_content(args.content, args.include_text_files)
-    asyncio.run(serve(content))
+    asyncio.new_event_loop().run_until_complete(serve(content, port=args.port if args.http else None))
+    # Skip asyncio.run's shutdown, which waits for threads still loading the model or building an index.
+    os._exit(0)
 
 
 def _resolve_content(content: list[str], include_text_files: bool) -> list[ContentType]:
@@ -103,29 +158,62 @@ def _resolve_content(content: list[str], include_text_files: bool) -> list[Conte
     return [ContentType(c) for c in content]
 
 
-def _load_index(path: str, content: list[ContentType]) -> SembleIndex:
-    """Build an index from a local path or git URL, exiting on FileNotFoundError."""
+def _load_index(paths: list[str], content: list[ContentType]) -> tuple[SembleIndex, list[tuple[str, SembleIndex]]]:
+    """Build an index per path or git URL, exiting on FileNotFoundError.
+
+    :param paths: Local paths or git URLs to index.
+    :param content: Content types to include.
+    :return: The index to search (merged when several paths are given) and the per-path (path, index) parts.
+    """
     try:
-        return _build_index(path, content)
+        parts = [(path, _build_index(path, content)) for path in paths]
     except FileNotFoundError as e:
         print(str(e), file=sys.stderr)
         sys.exit(1)
+    return (parts[0][1] if len(parts) == 1 else SembleIndex.merge(parts)), parts
 
 
-def _run_search(path: str, query: str, top_k: int, content: list[ContentType], max_snippet_lines: int | None) -> None:
+def _print_results(out: dict, output_format: str) -> None:
+    """Print a format_results() payload as JSON or as human-readable text."""
+    if output_format == "json":
+        print(json.dumps(out))
+    elif "error" in out:
+        print(out["error"])
+    else:
+        for r in out["results"]:
+            snippet = f"\n\n{r['content']}" if "content" in r else ""
+            print(f"{r['file_path']}:{r['start_line']}-{r['end_line']}{snippet}\n")
+
+
+def _run_search(
+    paths: list[str],
+    query: str,
+    top_k: int,
+    content: list[ContentType],
+    max_snippet_lines: int | None,
+    output_format: str,
+) -> None:
     """Handle the `search` subcommand."""
-    index = _load_index(path, content)
+    index, parts = _load_index(paths, content)
     results = index.search(query, top_k=top_k, max_snippet_lines=max_snippet_lines)
-    out = format_results(query, results, max_snippet_lines) if results else {"error": "No results found."}
-    print(json.dumps(out))
-    _maybe_save_index(index, path)
+    out = (
+        format_results(query, results, max_snippet_lines, index.sources) if results else {"error": "No results found."}
+    )
+    _print_results(out, output_format)
+    _maybe_save_index(parts)
 
 
 def _run_find_related(
-    path: str, file_path: str, line: int, top_k: int, content: list[ContentType], max_snippet_lines: int | None
+    paths: list[str],
+    file_path: str,
+    line: int,
+    top_k: int,
+    content: list[ContentType],
+    max_snippet_lines: int | None,
+    output_format: str,
 ) -> None:
     """Handle the `find-related` subcommand."""
-    index = _load_index(path, content)
+    index, parts = _load_index(paths, content)
     chunk = resolve_chunk(index.chunks, file_path, line)
     if chunk is None:
         print(f"No chunk found at {file_path}:{line}.", file=sys.stderr)
@@ -133,84 +221,124 @@ def _run_find_related(
     results = index.find_related(chunk, top_k=top_k, max_snippet_lines=max_snippet_lines)
     label = f"Chunks related to {file_path}:{line}"
     out = (
-        format_results(label, results, max_snippet_lines)
+        format_results(label, results, max_snippet_lines, index.sources)
         if results
         else {"error": f"No related chunks found for {file_path}:{line}."}
     )
-    print(json.dumps(out))
-    _maybe_save_index(index, path)
+    _print_results(out, output_format)
+    _maybe_save_index(parts)
+
+
+def _cached_index_paths(cache_folder: Path) -> Iterator[Path]:
+    """Yield index folders in the cache that sit under a sha256 cache key."""
+    return (path for path in cache_folder.glob("*/index*") if _SHA_256_REGEX.match(path.parent.name))
+
+
+def _clear_indexes(cache_folder: Path) -> None:
+    """Remove all valid index entries from the cache folder."""
+    indexes = {
+        path.parent for path in _cached_index_paths(cache_folder) if not PersistencePath.from_path(path).non_existing()
+    }
+
+    if not indexes:
+        print(f"No indexes found to clear in `{cache_folder}`")
+    else:
+        for index_folder in indexes:
+            rmtree(index_folder)
+            print(f"Cleared index at `{index_folder}`")
+
+
+def _clear_savings(cache_folder: Path) -> None:
+    """Remove the savings file from the cache folder."""
+    path = cache_folder / "savings.jsonl"
+    if not path.exists():
+        print(f"No savings file found at `{path}`")
+    else:
+        path.unlink()
+        print(f"Cleared savings at `{path}`")
+
+
+def _clear_orphans(cache_folder: Path) -> None:
+    """Remove index entries whose local root_path no longer exists."""
+    orphans: dict[Path, str] = {}
+    for path in _cached_index_paths(cache_folder):
+        try:
+            with open(path / "metadata.json", encoding="utf-8") as f:
+                metadata = json.load(f)
+                root_path = metadata.get("root_path") if isinstance(metadata, dict) else None
+        except (OSError, json.JSONDecodeError):
+            continue
+        # Git-URL entries store their temp clone dir as root_path, so only trust entries whose key matches.
+        if not isinstance(root_path, str) or not root_path or cache_key(root_path) != path.parent.name:
+            continue
+        if not Path(root_path).exists():
+            orphans[path.parent] = root_path
+
+    if not orphans:
+        print("No orphaned indexes found")
+    else:
+        for index_folder, root_path in orphans.items():
+            rmtree(index_folder)
+            print(f"Cleared orphaned index for `{root_path}`")
 
 
 def _run_clear(clear_type: _CLEAR_CHOICE) -> None:
     """Run the `clear` subcommand."""
     cache_folder = resolve_cache_folder()
     if clear_type == "index" or clear_type == "all":
-        indexes = []
-        for path in cache_folder.glob("*/index"):
-            if not _SHA_256_REGEX.match(path.parent.name):
-                continue
-            if PersistencePath.from_path(path).non_existing():
-                continue
-            indexes.append(path)
-
-        if not indexes:
-            print(f"No indexes found to clear in `{cache_folder}`")
-        else:
-            for path in indexes:
-                index_folder = path.parent
-                rmtree(index_folder)
-                print(f"Cleared index at `{index_folder}`")
-
+        _clear_indexes(cache_folder)
     if clear_type == "savings" or clear_type == "all":
-        path = cache_folder / "savings.jsonl"
-        if not path.exists():
-            print(f"No savings file found at `{path}`")
-        else:
-            path.unlink()
-            print(f"Cleared savings at `{path}`")
+        _clear_savings(cache_folder)
+    if clear_type == "orphans":
+        _clear_orphans(cache_folder)
+
+
+def _run_doctor(full: bool) -> None:
+    """Run installation diagnostics and fail when a required check fails."""
+    from semble.doctor import run_doctor
+
+    if not run_doctor(full=full):
+        raise SystemExit(1)
 
 
 def _cli_main() -> None:
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(
-        prog="semble", description="Local hybrid code search for network-restricted Linux systems."
+        prog="semble", description="Local hybrid code search for network-restricted environments."
     )
-    parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("-V", "--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command")
 
     search_p = sub.add_parser("search", help="Search a codebase.")
     search_p.add_argument("query", help="Natural language or code query.")
-    search_p.add_argument("path", nargs="?", default=".", help="Local path or git URL (default: current directory).")
-    search_p.add_argument("-k", "--top-k", type=int, default=5, help="Number of results (default: 5).")
-    search_p.add_argument(
-        "--max-snippet-lines",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Lines of source per result (default: full chunk). 10 = signature + body, 0 = no code.",
-    )
-    _add_content_args(search_p)
+    _add_query_args(search_p)
 
     clear_p = sub.add_parser("clear", help="Clear the index cache.")
-    clear_p.add_argument("type", choices=["all", "index", "savings"], help="Type of cache to clear.")
+    clear_p.add_argument(
+        "type",
+        choices=["all", "index", "savings", "orphans"],
+        help="Type of cache to clear. `orphans` removes indexes whose source path no longer exists.",
+    )
 
     related_p = sub.add_parser("find-related", help="Find code similar to a specific location.")
     related_p.add_argument("file_path", help="File path as shown in search results.")
     related_p.add_argument("line", type=int, help="Line number (1-indexed).")
-    related_p.add_argument("path", nargs="?", default=".", help="Local path or git URL (default: current directory).")
-    related_p.add_argument("-k", "--top-k", type=int, default=5, help="Number of results (default: 5).")
-    related_p.add_argument(
-        "--max-snippet-lines",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Lines of source per result (default: full chunk). 10 = signature + body, 0 = no code.",
+    _add_query_args(related_p)
+
+    file_types_p = sub.add_parser("file-types", help="List the file extensions indexed per content type.")
+    file_types_p.add_argument(
+        "--content",
+        nargs="+",
+        default=["all"],
+        choices=[ct.value for ct in ContentType] + ["all"],
+        metavar="TYPE",
+        help="Content types to list (space-separated). Choices: code, docs, config, all. Default: all.",
     )
-    _add_content_args(related_p)
 
     sub.add_parser("savings", help="Show token savings and usage stats.")
 
     doctor_p = sub.add_parser("doctor", help="Check the offline installation and bundled assets.")
-    doctor_p.add_argument("--full", action="store_true", help="Hash every asset and exercise aliases and the model.")
+    doctor_p.add_argument("--full", action="store_true", help="Hash bundled assets and load all parsers and the model.")
 
     install_p = sub.add_parser("install", help="Configure semble across coding agents.")
     uninstall_p = sub.add_parser("uninstall", help="Remove semble configuration from coding agents.")
@@ -227,7 +355,7 @@ def _cli_main() -> None:
             nargs="+",
             choices=[*(t.value for t in IntegrationType), "all"],
             metavar="TYPE",
-            help="Integrations to include (mcp, instructions, subagent, or all). Default: all. Requires --agent.",
+            help="Integrations to include (mcp, instructions, subagent, skill, or all). Default: all but skill. Requires --agent.",
         )
         p.add_argument(
             "-y",
@@ -239,10 +367,7 @@ def _cli_main() -> None:
     args = parser.parse_args()
 
     if args.command == "doctor":
-        from semble.doctor import run_doctor
-
-        if not run_doctor(full=args.full):
-            raise SystemExit(1)
+        _run_doctor(full=args.full)
     elif args.command == "savings":
         print(format_savings_report())
     elif args.command in ("install", "uninstall"):
@@ -251,10 +376,18 @@ def _cli_main() -> None:
 
         from semble.installer import run
 
-        integration_ids = None if not args.type or "all" in args.type else [IntegrationType(t) for t in args.type]
+        integration_ids = (
+            None
+            if not args.type
+            else list(IntegrationType)
+            if "all" in args.type
+            else [IntegrationType(t) for t in args.type]
+        )
         run(args.command, agent_ids=args.agent, integration_ids=integration_ids, yes=args.yes)
     elif args.command == "clear":
         _run_clear(args.type)
+    elif args.command == "file-types":
+        print(json.dumps({ct.value: get_extensions([ct]) for ct in _resolve_content(args.content, False)}))
     elif args.command == "search":
         _run_search(
             args.path,
@@ -262,6 +395,7 @@ def _cli_main() -> None:
             args.top_k,
             _resolve_content(args.content, args.include_text_files),
             args.max_snippet_lines,
+            args.format,
         )
     elif args.command == "find-related":
         _run_find_related(
@@ -271,6 +405,7 @@ def _cli_main() -> None:
             args.top_k,
             _resolve_content(args.content, args.include_text_files),
             args.max_snippet_lines,
+            args.format,
         )
     else:
         parser.print_help()

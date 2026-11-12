@@ -2,16 +2,20 @@ import hashlib
 import json
 import logging
 import os
-import shutil
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import orjson
+
+from semble.chunking.chunking import _DESIRED_CHUNK_LENGTH_CHARS
+from semble.index.bm25 import BM25
+from semble.index.dense import SelectableBasicBackend
 from semble.index.file_walker import walk_files
 from semble.index.files import FileStatus, get_extensions, get_file_status
-from semble.index.types import PersistencePath
-from semble.types import ContentType
+from semble.index.types import CACHE_FORMAT_VERSION, FileManifestEntry, PersistencePath, PreviousIndex, make_chunk_id
+from semble.types import Chunk, ContentType
 from semble.utils import is_git_url, resolve_model_name
 
 logger = logging.getLogger(__name__)
@@ -20,16 +24,21 @@ if TYPE_CHECKING:
     from semble.index import SembleIndex
 
 
-def find_index_from_cache_folder(path: str) -> Path:
-    """Finds an index from a cache folder and a project path."""
+def cache_key(path: str) -> str:
+    """Compute the sha256 cache key for a local path or git URL."""
     if is_git_url(path):
         data = path.encode("utf-8")
     else:
         normalized = Path(path).expanduser().resolve()
         data = str(normalized).encode("utf-8")
-    subdir_path = hashlib.new("sha256", data).hexdigest()
-    cache_dir = resolve_cache_folder() / subdir_path
-    return cache_dir / "index"
+    return hashlib.new("sha256", data).hexdigest()
+
+
+def find_index_from_cache_folder(path: str, content: Sequence[ContentType] = (ContentType.CODE,)) -> Path:
+    """Find an exact content index in the cache for a project path."""
+    cache_dir = resolve_cache_folder() / cache_key(path)
+    scope = "-".join(sorted({content_type.value for content_type in content}))
+    return cache_dir / ("index" if scope == ContentType.CODE.value else f"index-{scope}")
 
 
 def _windows_cache_dir(name: str) -> Path:
@@ -80,68 +89,122 @@ def resolve_cache_folder() -> Path:
     return cache_dir
 
 
-def clear_cache(path: str) -> None:
-    """Clears the cache for the given path."""
-    index_path = find_index_from_cache_folder(path)
-    if index_path.exists():
-        shutil.rmtree(index_path)
-
-
 def save_index_to_cache(index: "SembleIndex", path: str) -> None:
     """Save an index to the cache folder if it was freshly built."""
     if not index.loaded_from_disk:
-        index.save(find_index_from_cache_folder(path))
+        index.save(find_index_from_cache_folder(path, index.content))
 
 
 def _metadata_matches(metadata: dict, model_path: str, content: Sequence[ContentType]) -> bool:
     """Return True if the stored metadata is compatible with the requested parameters."""
-    from semble.chunking.chunking import _DESIRED_CHUNK_LENGTH_CHARS  # avoid circular import at module level
-
     try:
         content_type = tuple(ContentType(s) for s in metadata["content_type"])
-        # chunk_size is absent in indexes built before this field was added; treat None as mismatch
-        # so old caches are transparently rebuilt with the current chunk size.
+        # chunk_size and cache_version are absent in indexes built before those fields were added;
+        # treat that as a mismatch so old caches are transparently rebuilt in the current format.
         chunk_size_ok = metadata.get("chunk_size") == _DESIRED_CHUNK_LENGTH_CHARS
-        return metadata["model_path"] == model_path and set(content_type) == set(content) and chunk_size_ok
+        version_ok = metadata.get("cache_version") == CACHE_FORMAT_VERSION
+        return (
+            metadata["model_path"] == model_path and set(content_type) == set(content) and chunk_size_ok and version_ok
+        )
     except (KeyError, ValueError):
         return False
 
 
-def get_validated_cache(path: str, model_path: str | None, content: Sequence[ContentType]) -> Path | None:
-    """Validates the cache folder and returns the index path."""
-    index_path = find_index_from_cache_folder(path)
-    if not index_path.exists():
-        return None
-
-    persistence_path = PersistencePath.from_path(index_path)
+def _load_matching_metadata(
+    path: str, model_path: str | None, content: Sequence[ContentType]
+) -> tuple[PersistencePath, dict] | None:
+    """Return the cached index files and metadata for path, or None if absent or built with other settings."""
+    persistence_path = PersistencePath.from_path(find_index_from_cache_folder(path, content))
     if persistence_path.non_existing():
         return None
-
+    try:
+        metadata = json.loads(persistence_path.metadata.read_text(encoding="utf-8"))
+    except ValueError:  # Truncated by a process killed mid-save; treat as a miss so the index is rebuilt.
+        return None
     if model_path is None:
         model_path = resolve_model_name()
-    with open(persistence_path.metadata, encoding="utf-8") as f:
-        metadata = json.load(f)
     if not _metadata_matches(metadata, model_path, content):
         return None
+    return persistence_path, metadata
+
+
+def get_validated_cache(path: str, model_path: str | None, content: Sequence[ContentType]) -> Path | None:
+    """Validates the cache folder and returns the index path."""
+    loaded = _load_matching_metadata(path, model_path, content)
+    if loaded is None:
+        return None
+    persistence_path, metadata = loaded
+    index_path = persistence_path.metadata.parent
 
     if is_git_url(str(path)):
         return index_path
 
-    write_time = metadata["time"]
     extensions = get_extensions(content)
 
     path_as_path = Path(path).resolve()
-    stored_files: list[str] = metadata.get("file_paths", [])
+    root_prefix = os.path.join(str(path_as_path), "")
+    stored_files = metadata.get("files", {})
     current_files = []
     for file_path in walk_files(path_as_path, extensions=extensions):
-        file_status = get_file_status(file_path, write_time)
-        if file_status == FileStatus.NEWER:
+        try:
+            stat = file_path.stat()
+            if get_file_status(file_path, stat) != FileStatus.VALID:
+                continue
+        except FileNotFoundError:
+            continue  # deleted mid-walk
+        indexed_path = str(file_path)[len(root_prefix) :]
+        stored = stored_files.get(indexed_path)
+        if stored is not None and stored.get("mtime_ns") != stat.st_mtime_ns:
             return None
-        if file_status != FileStatus.VALID:
-            continue
-        current_files.append(str(file_path.relative_to(path_as_path)))
+        current_files.append(indexed_path)
 
     if set(current_files) != set(stored_files):
         return None
 
     return index_path
+
+
+def load_previous_for_incremental(
+    path: str, model_path: str | None, content: Sequence[ContentType]
+) -> PreviousIndex | None:
+    """Load compatible index state for incremental reuse.
+
+    :param path: Source path used to locate the cached index.
+    :param model_path: Requested model, or None to use the default.
+    :param content: Content types the cached index must support.
+    :return: Previous index state, or None if the cache is unavailable or invalid.
+    """
+    try:
+        loaded = _load_matching_metadata(path, model_path, content)
+        if loaded is None:
+            return None
+        persistence_path, metadata = loaded
+
+        raw_manifest = metadata.get("files")
+        if not raw_manifest:
+            return None
+        manifest = {indexed_path: FileManifestEntry(**entry) for indexed_path, entry in raw_manifest.items()}
+
+        chunks = [Chunk.from_dict(item) for item in orjson.loads(persistence_path.chunks.read_bytes())]
+
+        vectors = SelectableBasicBackend.load(persistence_path.semantic_index).vectors
+        bm25_index = BM25.load(persistence_path.bm25_index)
+        chunk_count = len(chunks)
+        if not (chunk_count == vectors.shape[0] == len(bm25_index.doc_order)):
+            return None
+        expected_ids: list[str] = []
+        next_start = 0
+        for indexed_path, entry in manifest.items():
+            if entry.start != next_start or any(
+                chunk.file_path != indexed_path for chunk in chunks[entry.start : entry.end]
+            ):
+                return None
+            expected_ids.extend(make_chunk_id(indexed_path, slot) for slot in range(entry.count))
+            next_start += entry.count
+        if next_start != chunk_count or bm25_index.doc_order != expected_ids:
+            return None
+
+        return PreviousIndex(chunks=chunks, vectors=vectors, manifest=manifest, bm25_index=bm25_index)
+    except (OSError, orjson.JSONDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        logger.debug("Unable to reuse incremental cache for %s", path, exc_info=True)
+        return None

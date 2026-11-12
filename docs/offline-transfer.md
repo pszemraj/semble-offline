@@ -1,6 +1,6 @@
 # Offline transfer
 
-The release wheel contains Semble's model and grammar assets, but it does not vendor ordinary Python dependencies. A fully disconnected target needs the release wheel and compatible wheels for all dependencies.
+A disconnected target needs the platform wheel and compatible wheels for all dependencies, including `semble-grammars`. Check [release availability](../README.md#install-and-verify) before using the URLs below; a locally built wheel path can replace the URL before publication.
 
 ## 1. Download on a connected machine
 
@@ -10,14 +10,14 @@ Linux x86_64:
 
 ```bash
 mkdir semble-offline-wheels
-python -m pip download --only-binary=:all: --dest semble-offline-wheels "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.5.1%2Boffline.2/semble-0.5.1%2Boffline.2-py3-none-manylinux_2_34_x86_64.whl"
+python -m pip download --only-binary=:all: --dest semble-offline-wheels "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.7.3%2Boffline.1/semble-0.7.3%2Boffline.1-py3-none-manylinux_2_34_x86_64.whl"
 ```
 
 Apple Silicon macOS:
 
 ```bash
 mkdir semble-offline-wheels
-python -m pip download --only-binary=:all: --dest semble-offline-wheels "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.5.1%2Boffline.2/semble-0.5.1%2Boffline.2-py3-none-macosx_11_0_arm64.whl"
+python -m pip download --only-binary=:all: --dest semble-offline-wheels "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.7.3%2Boffline.1/semble-0.7.3%2Boffline.1-py3-none-macosx_11_0_arm64.whl"
 ```
 
 The resulting `semble-offline-wheels/` directory is the complete transfer payload.
@@ -31,20 +31,20 @@ Move `semble-offline-wheels/` to the disconnected machine through the approved t
 Activate the destination environment, change to the directory containing `semble-offline-wheels/`, then paste:
 
 ```bash
-python -m pip install --no-index --find-links ./semble-offline-wheels "semble[mcp]==0.5.1+offline.2"
+python -m pip install --no-index --find-links ./semble-offline-wheels "semble[mcp]==0.7.3+offline.1"
 ```
 
 `--no-index` prevents the installer from contacting a package index and `--find-links` restricts dependency resolution to the transferred directory.
 
 ## 4. Verify without network access
 
-Run diagnostics with invalid proxy endpoints so an accidental network request fails immediately:
+Run diagnostics with an empty cache and invalid proxy endpoints. This exercises local grammar extraction; for an actual network-blocking acceptance test, disconnect the machine or apply an OS network restriction as well:
 
 ```bash
-HF_HUB_OFFLINE=1 HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 python -m semble doctor --full
+XDG_CACHE_HOME="$(mktemp -d)" HF_HUB_OFFLINE=1 HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 python -m semble doctor --full
 ```
 
-The command should end with `All required checks passed.` You can now run `semble install` to configure an agent on the disconnected machine.
+Require [full diagnostics](../README.md#install-and-verify) to pass, then [configure the agent](installation.md).
 
 ## Internal package index
 

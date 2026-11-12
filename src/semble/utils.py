@@ -22,9 +22,11 @@ def resolve_chunk(chunks: list[Chunk], file_path: str, line: int) -> Chunk | Non
     Reconstructs a Chunk from its JSON-primitive MCP tool arguments (file_path + line)
     before calling into the library.
     """
+    # Normalize separators: file_path is stored with the platform's native separator.
+    file_path = file_path.replace("\\", "/")
     fallback = None
     for chunk in chunks:
-        if chunk.file_path == file_path and chunk.start_line <= line <= chunk.end_line:
+        if chunk.file_path.replace("\\", "/") == file_path and chunk.start_line <= line <= chunk.end_line:
             if line < chunk.end_line:
                 return chunk
             if fallback is None:  # line == end_line: boundary; keep as fallback for end-of-file chunks
@@ -32,12 +34,15 @@ def resolve_chunk(chunks: list[Chunk], file_path: str, line: int) -> Chunk | Non
     return fallback
 
 
-def format_results(query: str, results: list[SearchResult], max_snippet_lines: int | None = None) -> dict[str, Any]:
+def format_results(
+    query: str, results: list[SearchResult], max_snippet_lines: int | None = None, repos: dict[str, str] | None = None
+) -> dict[str, Any]:
     """Render results as a flat JSONable object.
 
     max_snippet_lines=None → full content per result.
     max_snippet_lines=0    → file path and line range only, no content.
     max_snippet_lines=N>0  → first N lines of content.
+    repos, when non-empty, maps the repo-label prefixes in file paths back to their sources.
     """
     formatted = []
     for r in results:
@@ -53,14 +58,17 @@ def format_results(query: str, results: list[SearchResult], max_snippet_lines: i
             lines = r.chunk.content.splitlines()
             entry["content"] = "\n".join(lines[:max_snippet_lines])
         formatted.append(entry)
-    return {"query": query, "results": formatted}
+    out: dict[str, Any] = {"query": query, "results": formatted}
+    if repos:
+        out["repos"] = repos
+    return out
 
 
 def resolve_model_name() -> str:
     """Resolve the embedding model without silently enabling network access.
 
-    ``SEMBLE_MODEL_NAME`` is an explicit escape hatch for a local path or a model
-    identifier. Without it, the model bundled in this distribution is required.
+    ``SEMBLE_MODEL_NAME`` selects a local model directory. Without it, the model
+    bundled in this distribution is required.
     """
     env_model = os.environ.get("SEMBLE_MODEL_NAME")
     if env_model:
