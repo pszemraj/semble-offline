@@ -1,8 +1,6 @@
 # Rebuilding and releases
 
-The source checkout contains the Linux model and extra grammar bundle. The macOS wheel requires a native bundle built from the same CUDA and zsh source pins. `semble-grammars` remains an ordinary Python dependency; its prebuilt parser archive is not copied into this wheel.
-
-Version `0.7.3+offline.1` is prepared on the integration branch. The release URLs in the user documentation become usable only after the maintainer publishes that release. Building and testing locally does not publish anything.
+Build from a clean checkout, or remove a previous `build/` directory before rebuilding to avoid packaging stale Python modules. The checkout includes Linux grammar libraries; macOS requires a native bundle. Asset revisions are listed in [provenance](provenance.md).
 
 ## Linux wheel
 
@@ -20,7 +18,7 @@ The verifier uses `auditwheel`'s policy analysis to require compatibility with `
 
 ## macOS arm64 wheel
 
-These native commands must be run on the Apple Silicon laptop; Linux validation cannot establish native macOS loading or performance. Run on macOS 11 or later with the compiler tools available. Install the maintainer tools, build the pinned extra grammars, then point setuptools at that bundle:
+Run these commands on Apple Silicon macOS with the compiler tools installed. Native compilation, loading, and performance remain unverified until the laptop checks below pass. Build the extra grammars, then point setuptools at that bundle:
 
 ```bash
 python -m pip install "build==1.5.0" "delocate==0.13.0" "GitPython==3.1.52" "anyio==4.14.2" "typing-extensions==4.16.0"
@@ -62,9 +60,9 @@ export HF_HUB_OFFLINE=1
 /tmp/semble-macos-check/bin/python -m semble doctor --full
 ```
 
-Require a passing model check, separate CUDA and zsh checks, the installed `semble-grammars` version and language count, and every parser loading from both sources. The empty-cache run must successfully extract dependency grammars under `$XDG_CACHE_HOME/semble/grammars/<version>/`, even though macOS search indexes otherwise default to `~/Library/Caches/semble/`.
+Require [full diagnostics](../README.md#install-and-verify) to pass and confirm dependency grammars appear in the new [grammar cache](provenance.md#grammar-sources). macOS search indexes otherwise default to `~/Library/Caches/semble/`; the explicit `SEMBLE_CACHE_LOCATION` above keeps this test isolated.
 
-While disconnected, search a local fixture repository containing `.py`, `.cu`, `.cuh`, and `.zsh` files and require no `falling back to line chunking` warning. On a local FAISS checkout, confirm that CUDA headers enter the index and CUDA chunks start at block boundaries:
+While disconnected, search a local fixture repository containing `.py`, `.cu`, `.cuh`, and `.zsh` files and require no `falling back to line chunking` warning. On a local FAISS checkout, count indexed CUDA headers and emitted chunk contents that start with whitespace:
 
 ```python
 from pathlib import Path
@@ -80,13 +78,13 @@ print("CUDA chunks starting on whitespace:", len(indented), "of", len(cuda_chunk
 print("package MiB:", sum(p.stat().st_size for p in Path(semble.__file__).parent.rglob("*") if p.is_file()) / 2**20)
 ```
 
-For the referenced FAISS snapshot, the expected header count is 66 and the indented CUDA chunk count is zero; record the actual checkout revision when comparing. The installed `semble/` directory should be roughly 45 MB, rather than the previous roughly 399 MB. This excludes the separate `semble_grammars/` dependency and extracted cache.
+For FAISS `7767c6396381c6586aba873fda72eec8d6819b7b`, Linux validation found 66 headers and zero of 1,429 emitted CUDA chunks starting with whitespace. That metric does not guarantee whole-function chunks: the upstream chunker splits oversized syntax nodes. Record the actual revision when comparing. The installed `semble/` directory should be roughly 45 MB, excluding the separate grammar dependency and extraction cache.
 
 Measure three CLI invocations using the same local FAISS checkout and query: first search with an empty index cache, an unchanged warm search, and a search after appending a comment to one source file in a disposable checkout. Use `/usr/bin/time -p /tmp/semble-macos-check/bin/python -m semble search "GPU distance calculation" /path/to/faiss --format text` for each. Compare ratios: the one-file update should be close to the warm search and substantially faster than cold indexing. The 2-vCPU reference was 6.1 s cold, 0.65 s warm, and 0.70 s after one edit; these are comparison ratios, not Mac latency targets.
 
 ## Bundle builder behavior
 
-`scripts/build_grammar_bundle.py` checks out `tree-sitter-language-pack` commit `6bb9761028dfc3a72329d15f0f339ec7ccb56159`, checks source metadata against `grammar-sources.json`, applies the tracked C++ linker and exact-revision fetch patches, and compiles only the selected sources. `--grammar NAME` can be repeated; omitting it builds all extras declared in the manifest. The current extras are CUDA and zsh. Output contains `grammars/`, a platform manifest, and a platform-adjusted `grammar-sources.json`.
+`scripts/build_grammar_bundle.py` checks out `tree-sitter-language-pack` commit `6bb9761028dfc3a72329d15f0f339ec7ccb56159`, checks source metadata against `grammar-sources.json`, applies the tracked C++ linker and exact-revision fetch patches, and compiles only the selected sources. `--grammar NAME` can be repeated; omitting it builds all extras declared in the manifest. Output contains `grammars/`, a platform manifest, and a platform-adjusted `grammar-sources.json`.
 
 Adding an extra means declaring its source in `grammar-sources.json` and supplying its platform library. Bundle-size checks derive the expected set from that source manifest.
 
@@ -102,4 +100,4 @@ The generator reads the declared source set, requires matching `.so` files, and 
 
 ## Reproducibility and release
 
-Existing release tooling builds clean source snapshots with the same staged bundle and `SOURCE_DATE_EPOCH`, checks platform wheels, and prepares GitHub Release assets. It does not publish an sdist or upload to PyPI. Tags, releases, and publication remain separate maintainer actions after review; this integration does not perform them or add CI checks.
+Release tooling builds clean source snapshots with the staged platform bundle and `SOURCE_DATE_EPOCH`, checks platform wheels, and publishes GitHub Release assets after a maintainer pushes a matching tag. It does not publish sdists. Check [release availability](../README.md#install-and-verify) before using published-wheel commands.
