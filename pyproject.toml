@@ -30,20 +30,19 @@ classifiers = [
     "Natural Language :: English",
 ]
 dependencies = [
-    "model2vec>=0.4.0",
-    "vicinity>=0.4.4",
+    "model2vec>=0.10.0,<0.11",
+    "vicinity>=0.4.4,<0.5",
     "numpy>=1.24.0",
-    "bm25s>=0.2.0",
     "pathspec>=0.12",
-    "tree-sitter>=0.25,<0.26",
-    "tree-sitter-language-pack==1.6.2",  # pinned: bundled grammar .so files match this version's cache layout
     "orjson",
     "questionary>=2.0,<3.0",
+    "semble-grammars>=0.1.2,<0.2",
+    "tqdm>=4.60",
 ]
 
 [project.optional-dependencies]
 mcp = [
-    "mcp>=1.0,<2.0",
+    "mcp>=2.0,<3.0",
 ]
 benchmark = [
     "sentence-transformers>=3.0",

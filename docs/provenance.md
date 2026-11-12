@@ -1,27 +1,36 @@
 # Asset provenance
 
-Semble Offline `0.5.1+offline.2` is based on [MinishLab/semble](https://github.com/MinishLab/semble) commit `f4c397e2ede0c16ab1772adeee9a0af1024043bf`, which reports upstream version 0.5.1. No newer upstream Semble changes are included.
+Semble Offline `0.7.3+offline.1` is based on [MinishLab/semble](https://github.com/MinishLab/semble) tag `v0.7.3`, commit `a1ba6c18a4b0a58a3d1a15217d64bc92678d1d9d`. It retains the offline model-loading distribution layer and adds two grammar libraries to upstream's `semble-grammars` parser source.
 
 ## Embedding model
 
 The bundled model is an unmodified snapshot of [`minishlab/potion-code-16M-v2`](https://huggingface.co/minishlab/potion-code-16M-v2) at revision `e9d2a44ca6a05ac6685f3b23709ea57eb7352d5b`. The model card declares an MIT license and is included in the installed package.
 
-## Grammar libraries
+## Grammar sources
 
-Both wheels contain the same 264 grammar sources selected from [`tree-sitter-language-pack` 1.6.2](https://github.com/kreuzberg-dev/tree-sitter-language-pack/releases/tag/v1.6.2) at commit `6bb9761028dfc3a72329d15f0f339ec7ccb56159`. `grammar-sources.json` records the separate upstream repository and exact revision for every grammar.
+The `semble-grammars` dependency ships prebuilt grammars in a package archive. Version 0.1.2 supplies 77 canonical languages per supported platform. It extracts requested libraries locally under `$XDG_CACHE_HOME/semble/grammars/<version>/` (default `~/.cache/semble/grammars/<version>/`, including on macOS), without network access. Its package owns the archive, source metadata, and licenses for those grammars; `semble doctor` reports the installed version and language count.
 
-The Linux bundle retains 260 libraries from the published `parsers-linux-x86_64.tar.zst` archive and rebuilds `mojo`, `nim`, `norg`, and `wolfram` from the same pinned sources. Those four grammars contain C++ scanners and required a corrected final link through the C++ runtime. They were built with conda-forge GCC 11.4 and a Linux 2.17 sysroot, then had their build-only RPATH removed with patchelf 0.17.2; the complete wheel is verified by `auditwheel` as `manylinux_2_34_x86_64`.
+This distribution bundles only these extras, selected from [`tree-sitter-language-pack` 1.6.2](https://github.com/kreuzberg-dev/tree-sitter-language-pack/releases/tag/v1.6.2) at commit `6bb9761028dfc3a72329d15f0f339ec7ccb56159`:
 
-The macOS bundle builds all 264 libraries from those pinned sources on the native arm64 runner. Generation uses tree-sitter CLI 0.26.8 with ABI 14, Rust 1.91, and `MACOSX_DEPLOYMENT_TARGET=11.0`, then gives each dylib the stable install name `@rpath/<filename>` instead of retaining its temporary build path. One tracked patch changes only the language-pack link command for the four C++ scanner grammars. A second makes the language-pack vendor helper explicitly fetch a pinned revision when it is not reachable from a repository's advertised refs. Neither patch alters parser sources or Semble upstream code, and both hashes are recorded in the platform manifest.
+| Extra | Source | Revision | License |
+| --- | --- | --- | --- |
+| CUDA | [tree-sitter-cuda](https://github.com/tree-sitter-grammars/tree-sitter-cuda) | `48b066f334f4cf2174e05a50218ce2ed98b6fd01` | MIT |
+| zsh | [tree-sitter-zsh](https://github.com/georgeharker/tree-sitter-zsh) | `86b37f8d515a529722411bc7bf3c9e993a4743bf` | MIT |
 
-The EBNF grammar is deliberately excluded because the v1.6.2 source metadata identifies `RubixDev/ebnf` as GPL-3.0. `.ebnf` files use Semble's line chunker.
+Extras take precedence over dependency parsers. The CUDA grammar covers `.cu` and `.cuh`; the dedicated zsh grammar overrides the dependency's `zsh` alias to Bash. Objective-C++ (`.mm`) uses the dependency's C++ grammar.
+
+The Linux extras are retained from the published `parsers-linux-x86_64.tar.zst` archive. The macOS bundle builds the same pinned sources natively for arm64 with tree-sitter CLI 0.26.8, Rust 1.91, and `MACOSX_DEPLOYMENT_TARGET=11.0`. The build helper uses the tracked language-pack C++ linker and pinned-revision fetch patches; their hashes are recorded in the platform manifest. Every macOS dylib receives the stable install name `@rpath/<filename>`.
+
+`tree-sitter-language-pack` is a build-time recipe only; it is not a runtime dependency. The expected extra grammar set comes from `grammar-sources.json`, rather than a fixed library count.
 
 ## Installed metadata and verification
 
 Each platform wheel includes:
 
-- `asset-manifest.json`, containing its OS, architecture, compatibility floor, build provenance, and SHA-256 digest for every model and grammar file
-- `grammar-sources.json`, containing each grammar's repository, exact revision, platform library filename, and upstream-recorded SPDX identifier
+- `asset-manifest.json`, containing its OS, architecture, compatibility floor, build provenance, and SHA-256 digest for every bundled model and extra grammar file
+- `grammar-sources.json`, containing the extras' repositories, exact revisions, platform library filenames, and upstream-recorded SPDX identifiers
 - `THIRD_PARTY_NOTICES.md` and the language-pack MIT license
 
-`semble doctor --full` validates all installed hashes and loads all 264 parsers. `scripts/verify_wheel.py` performs the same integrity checks directly against a wheel, rejects mixed-platform contents, verifies ELF x86_64 or Mach-O arm64 headers, and rejects a macOS library whose deployment target is newer than 11.0 or whose install name is not canonical. With `--check-linux-policy`, it uses `auditwheel`'s ABI analysis to enforce the Linux compatibility floor without parsing human-readable output. CI runs that policy check for Linux and uses `delocate` for macOS dynamic dependencies and architectures.
+`semble doctor --full` validates the bundled hashes, loads the embedding model, and loads every parser from both sources. Its direct `semble-grammars` checks expose extraction or loading errors rather than letting search silently degrade to line chunking.
+
+`scripts/verify_wheel.py` checks the wheel's bundled assets, rejects mixed-platform contents, verifies ELF x86_64 or Mach-O arm64 headers, and rejects a macOS library whose deployment target is newer than 11.0 or whose install name is not canonical. With `--check-linux-policy`, it uses `auditwheel`'s ABI analysis to enforce the Linux compatibility floor. Native macOS verification with `delocate` is described in [Rebuilding and releases](rebuilding.md).

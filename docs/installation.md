@@ -8,21 +8,21 @@ Activate the Python environment that the agent will use. The installer records t
 
 ## 2. Install Semble Offline
 
-Choose the release wheel matching the destination platform.
+The commands below target the planned `0.7.3+offline.1` release and require the maintainer to publish those assets first. Before publication, [build a local wheel](rebuilding.md). Choose the release wheel matching the destination platform.
 
 Linux x86_64:
 
 ```bash
-python -m pip install "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.5.1%2Boffline.2/semble-0.5.1%2Boffline.2-py3-none-manylinux_2_34_x86_64.whl"
+python -m pip install "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.7.3%2Boffline.1/semble-0.7.3%2Boffline.1-py3-none-manylinux_2_34_x86_64.whl"
 ```
 
 Apple Silicon macOS:
 
 ```bash
-python -m pip install "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.5.1%2Boffline.2/semble-0.5.1%2Boffline.2-py3-none-macosx_11_0_arm64.whl"
+python -m pip install "semble[mcp] @ https://github.com/pszemraj/semble-offline/releases/download/v0.7.3%2Boffline.1/semble-0.7.3%2Boffline.1-py3-none-macosx_11_0_arm64.whl"
 ```
 
-The macOS release wheel is the only supported end-user macOS installation path. A Git-source build intentionally fails on macOS unless a maintainer first prepares a native bundle and sets `SEMBLE_OFFLINE_BUNDLE_DIR`. Linux can use the matching release wheel or the `v0.5.1+offline.2` Git tag. Ordinary Python dependencies still come from the configured package index. Remove `[mcp]` only if the agent will call the CLI directly.
+The macOS release wheel is the only supported end-user macOS installation path. A Git-source build intentionally fails on macOS unless a maintainer first prepares a native bundle and sets `SEMBLE_OFFLINE_BUNDLE_DIR`. Linux can use the matching release wheel or a source checkout. Ordinary Python dependencies still come from the configured package index. Remove `[mcp]` only if the agent will call the CLI directly.
 
 ## 3. Verify the installation
 
@@ -32,7 +32,7 @@ Run the full check before configuring an agent or moving the environment behind 
 HF_HUB_OFFLINE=1 python -m semble doctor --full
 ```
 
-The command checks the supported platform, every bundled asset hash, all 264 grammar parsers, the embedding model, and the MCP dependencies. It should end with `All required checks passed.` Both `semble --version` and `python -m semble --version` should report `0.5.1+offline.2`.
+The command checks the supported platform, every bundled asset hash, every bundled extra and every `semble-grammars` parser, the embedding model, and the MCP dependencies. It should end with `All required checks passed.` Both `semble --version` and `python -m semble --version` should report `0.7.3+offline.1`.
 
 ## 4. Configure the agent
 
@@ -48,7 +48,7 @@ For unattended setup, specify the agent and integrations:
 semble install --agent codex --type mcp instructions --yes
 ```
 
-Replace `codex` with an ID shown by `semble install --help`. Integration types are `mcp`, `instructions`, and `subagent`; support varies by agent. The installer preserves unrelated configuration.
+Replace `codex` with an ID shown by `semble install --help`. Integration types are `mcp`, `instructions`, `subagent`, and `skill`; support varies by agent. The installer preserves unrelated configuration.
 
 Remove the configuration later with the matching agent ID:
 
@@ -61,7 +61,7 @@ semble uninstall --agent codex --type all --yes
 Restart an already-running agent so it reloads MCP configuration, then paste:
 
 ```text
-Use Semble for code discovery in this repository. Search with one focused description at a time. Use `semble search "<behavior or code description>" .` from the shell, or the Semble MCP search tool when available. After finding one relevant implementation, use `semble find-related <file_path> <line> .` to find similar code. Use exact-text search only for known strings, symbols, and exhaustive occurrence checks.
+Use Semble for code discovery in this repository. Search with one focused description at a time. Use `semble search "<behavior or code description>" . --format text` from the shell, or the Semble MCP search tool when available. After finding one relevant implementation, use `semble find-related <file_path> <line> .` to find similar code. Use exact-text search only for known strings, symbols, and exhaustive occurrence checks.
 ```
 
 The [README agent block](../README.md#paste-this-into-your-agent) includes installation and verification instructions for an agent that should perform the entire setup itself.
@@ -70,6 +70,14 @@ The [README agent block](../README.md#paste-this-into-your-agent) includes insta
 
 MCP entries invoke the absolute `sys.executable` path from the environment used to run `semble install`, with arguments `-m semble`. Keep that environment in place. If it moves, rerun `semble install` to refresh the path.
 
-Use the same release-wheel requirement with `--upgrade --force-reinstall` to upgrade or repair the package. Do not follow it with an unqualified `python -m pip install semble`, which may replace this distribution with upstream Semble and restore runtime asset downloads.
+Use the same release-wheel requirement with `--upgrade --force-reinstall` to upgrade or repair the package. Do not follow it with an unqualified `python -m pip install semble`, which may replace this distribution with upstream Semble and remove its bundled model and extra grammars.
 
 For a target with no package-index access, use the [offline transfer procedure](offline-transfer.md).
+
+## Search paths and file types
+
+`semble search "invoice endpoint" ./service-a ../service-b --format text` searches several local repositories together. JSON is the default output format. Pass repository-prefixed result paths to `find-related` with the same search paths. Indexes refresh incrementally when files change.
+
+`semble file-types` lists the indexed extensions per content type. CUDA headers (`.cuh`) are indexed as CUDA, and Objective-C++ (`.mm`) uses C++. Use `semble clear orphans` to remove cached indexes for repositories no longer present on disk.
+
+The `semble-grammars` dependency extracts prebuilt parsers without a network connection into `$XDG_CACHE_HOME/semble/grammars/<version>/`, or `~/.cache/semble/grammars/<version>/` if unset. This path must be writable, including on macOS. The wheel's CUDA and zsh extras load directly from the installed package and take precedence.

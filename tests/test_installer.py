@@ -9,15 +9,19 @@ from semble.installer import run
 from semble.installer.agents import (
     _STDIO_SERVER_CONFIG,
     AGENTS,
+    INSTRUCTIONS,
     SEMBLE_END,
     SEMBLE_START,
+    SKILL_POINTER,
     IntegrationType,
-    _opencode_mcp_path,
     _vscode_mcp_path,
+    _xdg_jsonc_path,
     is_detected,
 )
 from semble.installer.config import (
+    _CODEX_MCP_BLOCK,
     _CODEX_MCP_HEADER,
+    _json5_parser,
     merge_json_member,
     merge_toml_block,
     remove_json_member,
@@ -29,6 +33,7 @@ from semble.installer.installer import (
     _INTEGRATIONS,
     _apply_instructions,
     _apply_mcp,
+    _apply_skill,
     _apply_subagent,
     _checkbox,
     _print_plan,
@@ -50,6 +55,7 @@ def claude_agent(tmp_path):
         mcp=replace(a.mcp, path=tmp_path / ".claude.json"),
         instructions_path=tmp_path / ".claude" / "CLAUDE.md",
         subagent_path=tmp_path / ".claude" / "agents" / "semble-search.md",
+        skill_path=tmp_path / ".claude" / "skills" / "semble" / "SKILL.md",
     )
 
 
@@ -61,6 +67,7 @@ def run_setup(monkeypatch, tmp_path, claude_agent):
         cursor,
         mcp=replace(cursor.mcp, path=tmp_path / "cursor.json"),
         subagent_path=tmp_path / "cursor_subagent.md",
+        skill_path=tmp_path / "cursor_skill" / "SKILL.md",
     )
     monkeypatch.setattr("semble.installer.installer.AGENTS", [claude_agent, cursor])
     monkeypatch.setattr("semble.installer.installer._checkbox", lambda _p, items: [v for _, v, _ in items])
@@ -108,10 +115,23 @@ def test_merge_mcp_into_empty_object_produces_valid_json(claude_agent, initial):
     json.loads(claude_agent.mcp.path.read_text())  # raises if invalid
 
 
-def test_merge_mcp_idempotent(claude_agent):
-    """Running merge twice adds semble once and reports unchanged the second time."""
-    claude_agent.mcp.path.write_text('{\n  "mcpServers": {}\n}\n')
+@pytest.mark.parametrize(
+    "stale",
+    ['{"command": "old"}', '{"command": "uvx",}'],  # outdated entry; JSON5-only syntax is rewritten too
+)
+def test_merge_mcp_replaces_stale_entry(claude_agent, stale):
+    """merge_mcp rewrites an existing semble entry that differs from the current one."""
+    claude_agent.mcp.path.write_text(f'{{"mcpServers": {{"semble": {stale}}}}}')
     assert merge_mcp(claude_agent).action == "updated"
+    assert json.loads(claude_agent.mcp.path.read_text())["mcpServers"]["semble"] == claude_agent.mcp.entry
+
+
+@pytest.mark.parametrize(("initial", "first"), [('{\n  "mcpServers": {}\n}\n', "updated"), (None, "created")])
+def test_merge_mcp_idempotent(claude_agent, initial, first):
+    """Running merge twice adds semble once and reports unchanged the second time, also for a fresh file."""
+    if initial is not None:
+        claude_agent.mcp.path.write_text(initial)
+    assert merge_mcp(claude_agent).action == first
     assert merge_mcp(claude_agent).action == "unchanged"
     assert claude_agent.mcp.path.read_text().count('"semble":') == 1  # the member key, once
 
@@ -155,6 +175,9 @@ def test_merge_and_remove_json_member_nested_section_key(tmp_path):
         ("pi", "mcpServers"),
         ("commandcode", "mcpServers"),
         ("antigravity", "mcpServers"),
+        ("qwen", "mcpServers"),
+        ("cline", "mcpServers"),
+        ("kilo", "mcp"),
         ("zcode", "mcp.servers"),  # dotted key: nested two levels deep
     ],
 )
@@ -170,12 +193,13 @@ def test_merge_mcp_writes_under_agent_key(tmp_path, agent_id, key):
 
 
 def test_mcp_skipped_when_grammar_unavailable(claude_agent, monkeypatch):
-    """When the bundled JSON5 grammar cannot load, merge/remove return 'skipped' without downloading."""
+    """When the JSON5 grammar is unavailable, merge/remove return 'skipped'."""
     claude_agent.mcp.path.write_text('{ "mcpServers": {} }')
     monkeypatch.setattr("semble.installer.config.get_parser", lambda _: 1 / 0)
-    monkeypatch.setattr("semble.installer.config._json5_parser_cache", False)
+    _json5_parser.cache_clear()
     assert merge_mcp(claude_agent).action == "skipped"
     assert remove_mcp(claude_agent).action == "skipped"
+    _json5_parser.cache_clear()
 
 
 def test_merge_mcp_reparse_guard(claude_agent, monkeypatch):
@@ -326,30 +350,32 @@ def test_vscode_mcp_path(monkeypatch, platform, env_vars):
     assert "Code" in str(p)
 
 
-def test_opencode_mcp_path(monkeypatch, tmp_path):
-    """_opencode_mcp_path respects XDG_CONFIG_HOME and prefers .jsonc over .json."""
+@pytest.mark.parametrize("app", ["opencode", "kilo"])
+def test_xdg_jsonc_path(monkeypatch, tmp_path, app):
+    """_xdg_jsonc_path respects XDG_CONFIG_HOME and prefers .jsonc over .json."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    assert _opencode_mcp_path().parent == tmp_path / "opencode"
-    assert _opencode_mcp_path().name == "opencode.jsonc"  # fallback when neither exists
+    assert _xdg_jsonc_path(app) == tmp_path / app / f"{app}.jsonc"  # fallback when neither exists
 
-    (tmp_path / "opencode").mkdir()
-    json_ = tmp_path / "opencode" / "opencode.json"
+    (tmp_path / app).mkdir()
+    json_ = tmp_path / app / f"{app}.json"
     json_.touch()
-    assert _opencode_mcp_path() == json_  # json when no jsonc
+    assert _xdg_jsonc_path(app) == json_  # json when no jsonc
 
-    jsonc = tmp_path / "opencode" / "opencode.jsonc"
+    jsonc = tmp_path / app / f"{app}.jsonc"
     jsonc.touch()
-    assert _opencode_mcp_path() == jsonc  # jsonc preferred
+    assert _xdg_jsonc_path(app) == jsonc  # jsonc preferred
 
 
-def test_apply_mcp(tmp_path):
-    """_apply_mcp returns None for mcp=None agents and uses the TOML path for codex."""
+@pytest.mark.parametrize("agent_id", ["codex", "grok"])
+def test_apply_mcp(tmp_path, agent_id):
+    """_apply_mcp returns None for mcp=None agents and writes a [mcp_servers.semble] table for TOML agents."""
     no_mcp = replace(next(a for a in AGENTS if a.id == "claude"), mcp=None)
     assert _apply_mcp(no_mcp, "install") is None
 
-    codex = next(a for a in AGENTS if a.id == "codex")
-    codex = replace(codex, mcp=replace(codex.mcp, path=tmp_path / "config.toml"))
-    assert _apply_mcp(codex, "install").action in ("created", "updated")
+    agent = next(a for a in AGENTS if a.id == agent_id)
+    agent = replace(agent, mcp=replace(agent.mcp, path=tmp_path / "config.toml"))
+    assert _apply_mcp(agent, "install").action == "created"
+    assert "[mcp_servers.semble]" in (tmp_path / "config.toml").read_text()
 
 
 def test_apply_instructions_none():
@@ -365,12 +391,52 @@ def test_apply_subagent(tmp_path):
 
     assert _apply_subagent(agent, "install").action == "created"
     assert dest.exists()
-    assert _apply_subagent(agent, "install").action == "updated"
+    assert _apply_subagent(agent, "install").action == "unchanged"
+    for stale in (b"stale", b"\xff\xfe"):  # outdated or not valid UTF-8
+        dest.write_bytes(stale)
+        assert _apply_subagent(agent, "install").action == "updated"
     assert _apply_subagent(agent, "uninstall").action == "removed"
     assert not dest.exists()
     assert _apply_subagent(agent, "uninstall").action == "not-found"
     assert _apply_subagent(replace(agent, subagent_path=None), "install") is None
     assert _apply_subagent(replace(agent, id="zzz"), "install").action == "error"
+
+
+def test_apply_skill(claude_agent):
+    """_apply_skill installs the offline SKILL.md plus a pointer, and removes only its own pointer on uninstall."""
+    dest, md = claude_agent.skill_path, claude_agent.instructions_path
+
+    assert _apply_skill(claude_agent, "install").action == "created"
+    text = dest.read_bytes().decode("utf-8")
+    assert text.startswith("---\nname: semble\n") and "python -m semble" in text and '"semble[mcp]"' not in text
+    assert md.read_text(encoding="utf-8") == SKILL_POINTER
+    assert _apply_skill(claude_agent, "install").action == "unchanged"
+    assert _apply_skill(claude_agent, "uninstall").action == "removed"
+    assert not dest.parent.exists() and not md.exists()
+    assert _apply_skill(claude_agent, "uninstall").action == "not-found"
+    assert _apply_skill(replace(claude_agent, skill_path=None), "install") is None
+
+    _apply_instructions(claude_agent, "install")
+    _apply_skill(claude_agent, "uninstall")
+    assert md.read_text(encoding="utf-8") == INSTRUCTIONS
+
+
+def test_run_skill_and_instructions_keeps_full_block(run_setup, claude_agent):
+    """Choosing both skill and instructions leaves the full instructions block, not the pointer."""
+    both = [IntegrationType.INSTRUCTIONS, IntegrationType.SKILL]
+    run("install", agent_ids=["claude"], integration_ids=both, yes=True)
+    assert claude_agent.skill_path.exists()
+    assert claude_agent.instructions_path.read_text(encoding="utf-8") == INSTRUCTIONS
+
+
+@pytest.mark.parametrize("agent", [a for a in AGENTS if a.subagent_path is not None], ids=lambda a: a.id)
+def test_apply_subagent_bundled_file_for_every_agent(tmp_path, agent):
+    """Every agent with a sub-agent path ships a bundled offline agent file."""
+    dest = tmp_path / agent.subagent_path.name
+    assert _apply_subagent(replace(agent, subagent_path=dest), "install").action == "created"
+    text = dest.read_text()
+    assert "semble-search" in text or "semble_search" in text
+    assert "uvx" not in text
 
 
 def test_apply_subagent_codex_toml(tmp_path):
@@ -388,6 +454,33 @@ def test_apply_subagent_codex_toml(tmp_path):
     assert not dest.exists()
 
 
+@pytest.mark.parametrize(
+    "agent", [a for a in AGENTS if a.mcp is not None and a.mcp.format == "json"], ids=lambda a: a.id
+)
+def test_mcp_configs_use_installed_python(agent):
+    """Every JSON MCP configuration starts the installed offline distribution."""
+    config = agent.mcp.entry
+    config = config.get("transport", config)
+    command = config["command"]
+    if isinstance(command, list):
+        assert command == [str(Path(sys.executable).resolve()), "-m", "semble"]
+    else:
+        assert command == str(Path(sys.executable).resolve())
+        assert config["args"] == ["-m", "semble"]
+
+
+def test_instructions_use_installed_python():
+    """The instructions' CLI fallback uses the installed offline distribution."""
+    assert "python -m semble" in INSTRUCTIONS
+    assert "uvx" not in INSTRUCTIONS
+
+
+def test_codex_mcp_block_uses_installed_python():
+    """The TOML MCP block uses the same interpreter as JSON configurations."""
+    assert str(Path(sys.executable).resolve()) in _CODEX_MCP_BLOCK
+    assert 'args = ["-m", "semble"]' in _CODEX_MCP_BLOCK
+
+
 def test_is_detected(monkeypatch, tmp_path):
     """is_detected returns True when binary is on PATH or config dir exists."""
     agent = next(a for a in AGENTS if a.id == "claude")
@@ -396,6 +489,31 @@ def test_is_detected(monkeypatch, tmp_path):
 
     agent_no_bin = replace(agent, binary=None, config_dir=tmp_path)
     assert is_detected(agent_no_bin)
+
+    agent_missing = replace(agent, binary=None, config_dir=tmp_path / "nonexistent")
+    assert not is_detected(agent_missing)
+
+
+def test_is_detected_true_when_config_dir_stat_denied(monkeypatch, tmp_path):
+    """A config dir blocked by sandboxing (EPERM/EACCES) still counts as detected, not absent."""
+    agent = replace(next(a for a in AGENTS if a.id == "claude"), binary=None, config_dir=tmp_path)
+
+    def _denied(self):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(Path, "stat", _denied)
+    assert is_detected(agent)
+
+
+def test_is_detected_false_on_other_os_error(monkeypatch, tmp_path):
+    """A non-permission OSError (e.g. ENOTDIR) is treated as absent, not detected."""
+    agent = replace(next(a for a in AGENTS if a.id == "claude"), binary=None, config_dir=tmp_path)
+
+    def _not_a_dir(self):
+        raise NotADirectoryError(20, "Not a directory")
+
+    monkeypatch.setattr(Path, "stat", _not_a_dir)
+    assert not is_detected(agent)
 
 
 def test_checkbox(monkeypatch):
@@ -409,13 +527,17 @@ def test_checkbox(monkeypatch):
     assert _checkbox("Pick:", [("Option A", "a", False)]) == ["a"]
 
 
-def test_print_plan(capsys, claude_agent):
-    """_print_plan prints each agent, integration, and resolved path (or 'not supported')."""
+@pytest.mark.parametrize("under_home", [True, False])
+def test_print_plan(capsys, claude_agent, monkeypatch, tmp_path, under_home):
+    """_print_plan prints each agent, integration, and path (shortened to ~ under home, or 'not supported')."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path if under_home else tmp_path / "elsewhere")
     no_mcp = replace(claude_agent, display_name="No MCP Agent", mcp=None)
     _print_plan([claude_agent, no_mcp], _INTEGRATIONS)
     out = capsys.readouterr().out
     assert "Claude Code" in out
     assert "not supported" in out  # no_mcp has no MCP
+    expected = Path("~") / ".claude" / "CLAUDE.md" if under_home else claude_agent.instructions_path
+    assert str(expected) in out
 
 
 def test_run_completes(run_setup, monkeypatch, capsys):
@@ -516,6 +638,10 @@ def test_cli_unattended_flags(monkeypatch, command):
     assert calls == [(command, {"agent_ids": ["pi"], "integration_ids": [IntegrationType.SUBAGENT], "yes": True})]
     assert isinstance(calls[0][1]["integration_ids"][0], IntegrationType)
 
+    monkeypatch.setattr(sys, "argv", ["semble", command, "--agent", "pi", "--type", "all"])
+    cli.main()
+    assert calls[-1][1]["integration_ids"] == list(IntegrationType)
+
 
 def test_cli_type_without_agent_errors(monkeypatch, capsys):
     """--type without --agent is rejected with a usage error."""
@@ -527,8 +653,8 @@ def test_cli_type_without_agent_errors(monkeypatch, capsys):
     assert "--type requires --agent" in capsys.readouterr().err
 
 
-def test_run_unattended_skips_prompts(run_setup, monkeypatch):
-    """run() with agent_ids skips both checkboxes and the confirmation prompt."""
+def test_run_unattended_skips_prompts(run_setup, monkeypatch, claude_agent):
+    """run() with agent_ids skips the prompts and installs only the default integrations."""
     from semble.installer import run
 
     def _boom(*_: object, **__: object) -> None:
@@ -537,6 +663,8 @@ def test_run_unattended_skips_prompts(run_setup, monkeypatch):
     monkeypatch.setattr("semble.installer.installer._checkbox", _boom)
     monkeypatch.setattr("semble.installer.installer.questionary.confirm", _boom)
     run("install", agent_ids=["claude"], yes=True)
+    assert claude_agent.instructions_path.exists()
+    assert not claude_agent.skill_path.exists()
 
 
 @pytest.mark.parametrize(
