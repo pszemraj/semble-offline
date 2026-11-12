@@ -212,16 +212,17 @@ def test_search_empty_query_returns_empty(indexed_index: SembleIndex, query: str
     ("disk_files", "chunk_paths", "expected"),
     [
         ({"foo.py": "hello world"}, ["foo.py", "foo.py"], {"foo.py": 11}),
+        ({"unicode.py": "你好\n"}, ["unicode.py"], {"unicode.py": 3}),
         ({}, ["nonexistent.py"], {}),
     ],
-    ids=["dedup-same-file", "missing-file-skipped"],
+    ids=["dedup-same-file", "unicode-characters", "missing-file-skipped"],
 )
 def test_compute_file_sizes(
     tmp_path: Path, disk_files: dict[str, str], chunk_paths: list[str], expected: dict[str, int]
 ) -> None:
-    """_compute_file_sizes deduplicates paths and silently skips missing files."""
+    """File sizes count characters, deduplicate paths, and skip missing files."""
     for name, content in disk_files.items():
-        (tmp_path / name).write_text(content)
+        (tmp_path / name).write_text(content, encoding="utf-8")
     index = SembleIndex.__new__(SembleIndex)
     index.chunks = [make_chunk("c", p) for p in chunk_paths]
     assert index._compute_file_sizes(tmp_path) == expected
