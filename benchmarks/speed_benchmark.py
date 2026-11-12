@@ -97,6 +97,7 @@ class _AsymmetricWrapper:
     def __init__(self, model: SentenceTransformer, max_seq_length: int = 512) -> None:
         self._model = model
         self._model.max_seq_length = max_seq_length
+        self.dim = model.get_sentence_embedding_dimension()
 
     def encode(self, texts: Sequence[str], use_multiprocessing: object = _UNSET, **_kwargs: object) -> np.ndarray:
         """Encode with the query prompt only when use_multiprocessing wasn't passed.

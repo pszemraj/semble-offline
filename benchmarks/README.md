@@ -126,7 +126,7 @@ The command suffixes below are modules under `benchmarks.baselines`.
 | [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) (`codebase_memory`) | `search_graph` in fast mode, using structural BM25 | `python -m pip install codebase-memory-mcp`; first run downloads a platform binary |
 | [ck](https://github.com/BeaconBay/ck) (`ck`) | Regex and semantic search with [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) | `cargo install ck-search` or `npm install -g @beaconbay/ck-search`; model downloads on first use |
 | [zvec-grep](https://github.com/zvec-ai/zvec-grep) (`zvecgrep`) | potion-code-16M-v2 + BM25 in direct mode | Node.js 22+; `npm install -g @zvec/zvec-grep@0.2.1`; model downloads on first index |
-| [CodeRankEmbed](https://huggingface.co/nomic-ai/CodeRankEmbed) (`coderankembed`) | Semantic search with a 137M-parameter transformer | Benchmark extra; see the adapter limitation below |
+| [CodeRankEmbed](https://huggingface.co/nomic-ai/CodeRankEmbed) (`coderankembed`) | Semantic search with a 137M-parameter transformer | Benchmark extra in the upstream environment below |
 | [Semble](../README.md) | potion-code-16M-v2 + BM25 + reranking | Upstream installation below |
 
 The zvec-grep measurements use 0.2.1; the runner records its installed version and parses its human-readable output. ColGREP runs with `--code-only` except for Bash repositories (bash-it, bats-core, nvm), where its code filter excludes `.sh` and `.bash`. codebase-memory-mcp creates `semble-bench-<repo>` projects and deletes them after evaluation.
@@ -157,7 +157,7 @@ Run another baseline by substituting its module suffix from the methods table, f
 ### Speed and ablations
 
 ```bash
-python -m benchmarks.speed_benchmark --tools semble bm25 colgrep zvec-grep ripgrep
+python -m benchmarks.speed_benchmark
 python -m benchmarks.speed_benchmark --tools semble zvec-grep
 python -m benchmarks.speed_benchmark --repo flask --repo axios
 python -m benchmarks.baselines.ablations
@@ -165,7 +165,7 @@ python -m benchmarks.baselines.ablations
 
 Speed defaults to one representative repository per language. Ablations run all configured retrieval/ranking modes; the runner has no `--mode` option.
 
-The CodeRankEmbed adapters need updating before rerunning that model: both lack the `dim` attribute required by Semble 0.7.3's indexer, and the standalone quality adapter also lacks `max_length` support. The speed command above omits it; invoking the speed runner without `--tools` selects it and fails. Historical quality results are in [coderankembed-812d8e74b9d0.json](results/coderankembed-812d8e74b9d0.json).
+Historical CodeRankEmbed quality results are in [coderankembed-812d8e74b9d0.json](results/coderankembed-812d8e74b9d0.json).
 
 For large grepai repositories, increase its embedding timeout. An explicit output file enables resuming completed repositories:
 
