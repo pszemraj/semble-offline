@@ -125,6 +125,29 @@ def test_merge_labels(indexed_index: SembleIndex) -> None:
     assert SembleIndex.merge([(source, indexed_index) for source in reversed(sources)]).sources == merged.sources
 
 
+def test_merge_unions_content(mock_model: Any, tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Merged content is the union of the parts' content in enum order, whichever source sorts first."""
+    docs_dir = tmp_path_factory.mktemp("a_docs")
+    code_dir = tmp_path_factory.mktemp("z_code")
+    (docs_dir / "README.md").write_text("# Guide\n\nHow to log in.\n")
+    (code_dir / "client.py").write_text("def call_login(password):\n    return http_post('/login', password)\n")
+    with patch("semble.index.index.load_model", return_value=(mock_model, "")):
+        docs = SembleIndex.from_path(docs_dir, content=[ContentType.DOCS])
+        code = SembleIndex.from_path(code_dir, content=[ContentType.CODE])
+    assert docs.content == (ContentType.DOCS,)
+    assert str(docs_dir) < str(code_dir)
+
+    expected = (ContentType.CODE, ContentType.DOCS)
+    docs_first = SembleIndex.merge([(str(docs_dir), docs), (str(code_dir), code)])
+    code_first = SembleIndex.merge([(str(code_dir), code), (str(docs_dir), docs)])
+    assert docs_first.content == expected
+    assert code_first.content == expected
+
+    with patch("semble.index.index.search", return_value=[]) as mock_search:
+        docs_first.search("login", top_k=3)
+    assert mock_search.call_args.kwargs["rerank"] is True
+
+
 @pytest.mark.parametrize(
     ("second", "match"),
     [

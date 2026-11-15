@@ -170,7 +170,7 @@ class SembleIndex:
         """Merge indexes built from several repos into one that searches them together.
 
         :param indexes: (source, index) pairs, where source is the local path or git URL the index was built from.
-        :return: A new in-memory index over all chunks.
+        :return: A new in-memory index over all chunks, covering every content type any of the indexes covers.
         :raises ValueError: If the indexes were built with different models, or the same repo is passed twice.
         """
         if len({index._model_path for _, index in indexes}) != 1:
@@ -198,13 +198,15 @@ class SembleIndex:
         vectors = np.vstack([index._semantic_index.vectors for _, index in parts])
 
         first = parts[0][1]
+        # Union in enum order, so the content (and the default rerank choice) does not depend on source sort order.
+        combined = {content_type for _, index in parts for content_type in index.content}
         merged = cls(
             first.model,
             bm25,
             SelectableBasicBackend(vectors, BasicArgs()),
             chunks,
             first._model_path,
-            content=first.content,
+            content=[content_type for content_type in ContentType if content_type in combined],
         )
         merged.sources = dict(zip(labels, sources))
         merged._file_sizes = {
