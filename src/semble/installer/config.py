@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from functools import cache
 from pathlib import Path
 from typing import Literal
@@ -9,14 +8,12 @@ from typing import Literal
 from semble_grammars import get_parser
 from tree_sitter import Node, Parser
 
-from semble.installer.agents import SEMBLE_END, SEMBLE_START, Action
+from semble.installer.agents import _PYTHON_EXECUTABLE, SEMBLE_END, SEMBLE_START, Action
 
 JsonObjectResult = tuple[Node, bytes] | Literal["skipped", "error"]
 
 _CODEX_MCP_HEADER = "[mcp_servers.semble]"
-_CODEX_MCP_BLOCK = (
-    f'[mcp_servers.semble]\ncommand = {json.dumps(str(Path(sys.executable).resolve()))}\nargs = ["-m", "semble"]\n'
-)
+_CODEX_MCP_BLOCK = f'[mcp_servers.semble]\ncommand = {json.dumps(_PYTHON_EXECUTABLE)}\nargs = ["-m", "semble"]\n'
 
 
 @cache

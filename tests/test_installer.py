@@ -1,10 +1,13 @@
+import importlib
 import json
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+import semble.installer
 from semble.installer import run
 from semble.installer.agents import (
     _STDIO_SERVER_CONFIG,
@@ -79,7 +82,7 @@ def test_merge_mcp_creates_fresh_file(claude_agent):
     assert merge_mcp(claude_agent).action == "created"
     data = json.loads(claude_agent.mcp.path.read_text())
     assert data["mcpServers"]["semble"] == _STDIO_SERVER_CONFIG
-    assert Path(data["mcpServers"]["semble"]["command"]).resolve() == Path(sys.executable).resolve()
+    assert data["mcpServers"]["semble"]["command"] == os.path.abspath(sys.executable)
     assert data["mcpServers"]["semble"]["args"] == ["-m", "semble"]
 
 
@@ -269,7 +272,7 @@ def test_codex_toml_merge_and_remove(tmp_path):
     assert _CODEX_MCP_HEADER in text
     assert 'model = "gpt-5"' in text
     assert "[mcp_servers.other]" in text
-    assert str(Path(sys.executable).resolve()) in text
+    assert f"command = {json.dumps(os.path.abspath(sys.executable))}" in text
     assert 'args = ["-m", "semble"]' in text
     assert merge_toml_block(f) == "unchanged"  # idempotent
 
@@ -463,9 +466,9 @@ def test_mcp_configs_use_installed_python(agent):
     config = config.get("transport", config)
     command = config["command"]
     if isinstance(command, list):
-        assert command == [str(Path(sys.executable).resolve()), "-m", "semble"]
+        assert command == [os.path.abspath(sys.executable), "-m", "semble"]
     else:
-        assert command == str(Path(sys.executable).resolve())
+        assert command == os.path.abspath(sys.executable)
         assert config["args"] == ["-m", "semble"]
 
 
@@ -477,8 +480,30 @@ def test_instructions_use_installed_python():
 
 def test_codex_mcp_block_uses_installed_python():
     """The TOML MCP block uses the same interpreter as JSON configurations."""
-    assert str(Path(sys.executable).resolve()) in _CODEX_MCP_BLOCK
+    assert f"command = {json.dumps(os.path.abspath(sys.executable))}" in _CODEX_MCP_BLOCK
     assert 'args = ["-m", "semble"]' in _CODEX_MCP_BLOCK
+
+
+def test_mcp_command_keeps_symlinked_interpreter(monkeypatch, tmp_path):
+    """A symlinked sys.executable (a venv's bin/python) is written as the symlink path, not its target.
+
+    The command is computed at import time, so the installer modules are imported fresh under a
+    patched sys.executable; monkeypatch restores the original modules afterwards.
+    """
+    link = tmp_path / "venv" / "bin" / "python"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(Path(sys.executable).resolve())
+    monkeypatch.setattr(sys, "executable", str(link))
+    for name in ("agents", "config"):
+        monkeypatch.setattr(semble.installer, name, getattr(semble.installer, name))
+        monkeypatch.delitem(sys.modules, f"semble.installer.{name}")
+    agents = importlib.import_module("semble.installer.agents")
+    config = importlib.import_module("semble.installer.config")
+
+    claude = next(a for a in agents.AGENTS if a.id == "claude")
+    assert claude.mcp.entry["command"] == str(link)
+    assert f"command = {json.dumps(str(link))}" in config._CODEX_MCP_BLOCK
+    assert str(link.resolve()) not in config._CODEX_MCP_BLOCK
 
 
 def test_is_detected(monkeypatch, tmp_path):

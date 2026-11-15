@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 _HOME = Path.home()
-_PYTHON_EXECUTABLE = str(Path(sys.executable).resolve())
+_PYTHON_EXECUTABLE = os.path.abspath(sys.executable)  # unresolved: a venv's bin/python symlink must stay the venv
 
 
 def _exists_or_denied(path: Path) -> bool:
