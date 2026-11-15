@@ -41,7 +41,7 @@ python -m pip install --no-index --find-links ./semble-offline-wheels "semble[mc
 Run diagnostics with an empty cache and invalid proxy endpoints. This exercises local grammar extraction; for an actual network-blocking acceptance test, disconnect the machine or apply an OS network restriction as well:
 
 ```bash
-XDG_CACHE_HOME="$(mktemp -d)" HF_HUB_OFFLINE=1 HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 python -m semble doctor --full
+XDG_CACHE_HOME="$(mktemp -d)" HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 python -m semble doctor --full
 ```
 
 Require [full diagnostics](../README.md#install-and-verify) to pass, then [configure the agent](installation.md).

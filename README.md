@@ -65,7 +65,7 @@ semble clear orphans
 
 ## Offline behavior
 
-Local indexing and querying use installed assets. The default model is bundled; `SEMBLE_MODEL_NAME` can select another local model directory. Dependency parsers extract locally on first use, while the two extra grammars load directly from the package. See [asset provenance](docs/provenance.md) for source pins, grammar precedence, file mappings, and cache locations, or [troubleshooting](docs/troubleshooting.md) for failed diagnostics.
+Local indexing and querying use installed assets and need no environment variables. The default model is bundled; `SEMBLE_MODEL_NAME` can select another local model directory. Dependency parsers extract locally on first use, while the two extra grammars load directly from the package. See [asset provenance](docs/provenance.md) for source pins, grammar precedence, file mappings, and cache locations, or [troubleshooting](docs/troubleshooting.md) for failed diagnostics.
 
 ## Project status
 

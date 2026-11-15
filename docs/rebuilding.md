@@ -55,8 +55,6 @@ For the offline check, disconnect networking after installing dependencies, star
 ```bash
 export XDG_CACHE_HOME="$(mktemp -d)"
 export SEMBLE_CACHE_LOCATION="$(mktemp -d)"
-export HF_HOME="$(mktemp -d)"
-export HF_HUB_OFFLINE=1
 /tmp/semble-macos-check/bin/python -m semble doctor --full
 ```
 
