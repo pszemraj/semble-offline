@@ -31,7 +31,7 @@ Support varies by agent. Without `--type`, the installer selects supported MCP, 
 
 MCP entries use the resolved `sys.executable` path from the installer, with arguments `-m semble`. Keep the Python environment in place; if it moves, update the command or rerun the installer.
 
-For a virtual environment whose Python executable is a symlink, inspect the generated command. If it resolves outside that environment, replace it with the path printed by `python -c 'import sys; print(sys.executable)'` from the intended environment.
+A `python -m venv` environment links its Python executable to the base interpreter, so the generated command resolves outside the environment and the server fails with `No module named semble`. After installing from such an environment, replace the command with the path printed by `python -c 'import sys; print(sys.executable)'` from the intended environment.
 
 ## Share an HTTP server
 

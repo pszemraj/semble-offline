@@ -18,7 +18,7 @@ The verifier uses `auditwheel`'s policy analysis to require compatibility with `
 
 ## macOS arm64 wheel
 
-Run these commands on Apple Silicon macOS with the compiler tools installed. Native compilation, loading, and performance remain unverified until the laptop checks below pass. Build the extra grammars, then point setuptools at that bundle:
+Run these commands on Apple Silicon macOS with the Xcode command line tools, rustup, and Node.js with npm installed. Build the extra grammars, then point setuptools at that bundle:
 
 ```bash
 python -m pip install "build==1.5.0" "delocate==0.13.0" "GitPython==3.1.52" "anyio==4.14.2" "typing-extensions==4.16.0"
