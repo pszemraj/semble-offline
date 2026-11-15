@@ -74,7 +74,15 @@ def _get_valid_user_cache_dir() -> Path | None:
 
 
 def resolve_cache_folder() -> Path:
-    """Resolves a cache folder, respects SEMBLE_CACHE_LOCATION (highest precedence), XDG_CACHE_HOME."""
+    """Resolve and create the cache folder.
+
+    An absolute SEMBLE_CACHE_LOCATION wins; a relative one is ignored with a warning. Otherwise the platform
+    default applies: ``~/Library/Caches/semble`` on macOS, ``semble/Cache`` under LOCALAPPDATA on Windows, and
+    ``$XDG_CACHE_HOME/semble`` (falling back to ``~/.cache/semble``) on Linux. XDG_CACHE_HOME is read only on
+    Linux and other platforms that are neither macOS nor Windows.
+
+    :return: The cache folder, created if missing.
+    """
     name = "semble"
     if user_cache_dir := _get_valid_user_cache_dir():
         cache_dir = user_cache_dir
