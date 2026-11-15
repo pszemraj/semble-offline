@@ -163,7 +163,7 @@ python -m benchmarks.speed_benchmark --repo flask --repo axios
 python -m benchmarks.baselines.ablations
 ```
 
-Speed defaults to one representative repository per language. Ablations run all configured retrieval/ranking modes; the runner has no `--mode` option.
+Speed defaults to one representative repository per language, and a run limited with `--repo` is not saved to a results file. Ablations run all configured retrieval/ranking modes; the runner has no `--mode` option.
 
 Historical CodeRankEmbed quality results are in [coderankembed-812d8e74b9d0.json](results/coderankembed-812d8e74b9d0.json).
 

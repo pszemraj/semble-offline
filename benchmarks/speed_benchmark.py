@@ -395,7 +395,7 @@ def main() -> None:
         )
 
     payload = {
-        "repos": _REPOS,
+        "repos": repos,
         "summary": summary,
         "results": [
             {
@@ -412,8 +412,9 @@ def main() -> None:
             for r in all_results
         ],
     }
-    out_path = save_results("speed", payload)
-    print(f"\nResults saved to {out_path}", file=sys.stderr)
+    if not args.repo:
+        out_path = save_results("speed", payload)
+        print(f"\nResults saved to {out_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":
