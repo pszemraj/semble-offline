@@ -4,21 +4,15 @@ from dataclasses import dataclass
 from functools import cache
 from logging import getLogger
 
+from semble_grammars import LanguageNotFoundError, UnsupportedPlatformError, get_parser
 from tree_sitter import Node, Parser
-from tree_sitter_language_pack import LanguageNotFoundError, SupportedLanguage, get_parser
 
-from semble._offline import OfflineAssetError, activate_bundled_grammars, grammar_library_path
-from semble.index.files import ALL_LANGUAGES
+from semble._offline import OfflineAssetError, get_bundled_parser
 
 logger = getLogger(__name__)
 
 _RECURSION_DEPTH = 500
 _MIN_CHUNK_SIZE = 50
-
-
-def is_supported_language(language: str) -> bool:
-    """Check if the language is supported by tree-sitter."""
-    return language in ALL_LANGUAGES
 
 
 @dataclass
@@ -30,30 +24,17 @@ class ChunkBoundary:
 
 
 @cache
-def _cached_get_parser(language: SupportedLanguage) -> Parser | None:
-    """Gets a parser from tree_sitter.
-
-    The bundled language-pack cache is authoritative. Languages deliberately
-    absent from the bundle use line chunking. No runtime download is attempted.
-    """
-    language_name = str(language)
+def _cached_get_parser(language: str) -> Parser | None:
+    """Load a bundled extra first, then a parser from semble-grammars."""
     try:
-        library = grammar_library_path(language_name)
-    except OfflineAssetError as error:
-        logger.error("Offline grammar assets are unavailable: %s", error)
-        return None
-
-    if library is None:
-        logger.warning("Language %s is not bundled; falling back to line chunking", language_name)
-        return None
-
-    try:
-        activate_bundled_grammars()
-        return get_parser(language)
+        parser = get_bundled_parser(language)
+        return parser if parser is not None else get_parser(language)
     except OfflineAssetError as error:
         logger.error("Offline grammar assets are unavailable: %s", error)
     except LanguageNotFoundError:
-        logger.warning("Language %s could not be loaded; falling back to line chunking", language_name)
+        logger.warning("Language %s not found, falling back to line chunking", language)
+    except UnsupportedPlatformError:
+        logger.warning("No bundled grammars for this platform, falling back to line chunking")
     except Exception:
         logger.error("Uncaught exception in _cached_get_parser", exc_info=True)
     return None

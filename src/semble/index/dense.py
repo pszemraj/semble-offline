@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 from functools import cache
 from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
+from huggingface_hub.errors import LocalEntryNotFoundError
 from huggingface_hub.utils.tqdm import disable_progress_bars
 from model2vec import StaticModel
 from vicinity.backends.basic import CosineBasicBackend
@@ -15,22 +17,30 @@ from semble.types import Chunk
 from semble.utils import resolve_model_name
 
 
+def _drop_unauthenticated_warning(record: logging.LogRecord) -> bool:
+    """Drop the Hub's unauthenticated-request warning; the public model downloads fine without a token."""
+    return "unauthenticated requests" not in record.getMessage()
+
+
 @cache
 def _load_cached(model_path: str) -> StaticModel:
     """Load a model and cache it, but only after the path resolves."""
     # Disable HF progress bars since the model is loaded silently in the background during indexing.
     disable_progress_bars()
+    logging.getLogger("huggingface_hub.utils._http").addFilter(_drop_unauthenticated_warning)
     try:
         if Path(model_path).exists():
             return StaticModel.from_pretrained(model_path, force_download=False)
         try:
-            model = StaticModel.from_pretrained(model_path, force_download=False)
+            return StaticModel.from_pretrained(model_path, force_download=False)
         except ValueError:
-            model = StaticModel.from_pretrained(model_path, force_download=True)
-    finally:
-        disable_progress_bars()
-
-    return model
+            return StaticModel.from_pretrained(model_path, force_download=True)
+    except LocalEntryNotFoundError as e:
+        raise RuntimeError(
+            f"Could not download model '{model_path}' from the Hugging Face Hub (huggingface.co). This is a "
+            "one-time download that is cached afterwards. Check your network access to the Hub, or set "
+            "SEMBLE_MODEL_NAME to a local path."
+        ) from e
 
 
 def load_model(model_path: str | None = None) -> tuple[StaticModel, str]:
@@ -45,7 +55,9 @@ def embed_chunks(model: StaticModel, chunks: list[Chunk]) -> npt.NDArray[np.floa
     """Embed chunks using the configured model."""
     if not chunks:
         return np.empty((0, model.dim), dtype=np.float32)
-    return np.array(model.encode([c.content for c in chunks], use_multiprocessing=False), dtype=np.float32)
+    return np.array(
+        model.encode([c.content for c in chunks], use_multiprocessing=False, max_length=None), dtype=np.float32
+    )
 
 
 class SelectableBasicBackend(CosineBasicBackend):

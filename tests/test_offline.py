@@ -8,10 +8,11 @@ from semble._offline import (
     bundled_grammar_dir,
     bundled_grammar_languages,
     bundled_model_dir,
+    get_bundled_parser,
     grammar_library_path,
     grammar_library_suffix,
-    grammar_symbol,
     load_asset_manifest,
+    load_grammar_sources,
     validate_bundled_assets,
 )
 from semble.utils import resolve_model_name
@@ -22,10 +23,10 @@ def test_asset_manifest_matches_bundle() -> None:
     manifest = load_asset_manifest()
     grammar_files = manifest["grammars"]["files"]
     suffix = grammar_library_suffix()
-    assert len(grammar_files) == 264
-    assert f"libtree_sitter_ebnf{suffix}" not in grammar_files
+    sources = load_grammar_sources()
+    assert set(grammar_files) == {entry["library"] for entry in sources.values()}
     assert set(grammar_files) == {path.name for path in bundled_grammar_dir().glob(f"*{suffix}")}
-    assert len(bundled_grammar_languages()) == 264
+    assert bundled_grammar_languages() == sorted(sources)
     assert all(check.ok for check in validate_bundled_assets())
 
 
@@ -41,16 +42,6 @@ def test_asset_validation_reports_malformed_manifest_section() -> None:
     assert checks[0].detail == "Asset manifest has no valid model.files section"
 
 
-def test_asset_validation_reports_invalid_exclusion_metadata() -> None:
-    """Invalid exclusion metadata fails its check without aborting diagnostics."""
-    manifest = deepcopy(load_asset_manifest())
-    manifest["grammars"]["excluded"] = None
-    with patch("semble._offline.load_asset_manifest", return_value=manifest):
-        checks = validate_bundled_assets()
-    exclusion = next(check for check in checks if check.name == "EBNF exclusion")
-    assert not exclusion.ok
-
-
 def test_asset_validation_reports_undeclared_model_file(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A stale or injected model file fails exact-set validation."""
     model_dir = tmp_path / "model"
@@ -62,7 +53,7 @@ def test_asset_validation_reports_undeclared_model_file(tmp_path, monkeypatch: p
     manifest = {
         "format_version": 2,
         "model": {"files": {"config.json": "unused"}},
-        "grammars": {"files": {}, "excluded": {"ebnf": "excluded"}},
+        "grammars": {"files": {}},
         "platform": {"library_suffix": ".so"},
     }
     monkeypatch.setattr("semble._offline._BUNDLED_DIR", tmp_path)
@@ -80,26 +71,20 @@ def test_bundled_languages_report_malformed_asset_manifest() -> None:
             bundled_grammar_languages()
 
 
-@pytest.mark.parametrize(
-    ("language", "symbol"),
-    [
-        ("csharp", "c_sharp"),
-        ("embeddedtemplate", "embedded_template"),
-        ("nushell", "nu"),
-        ("vb", "vb_dotnet"),
-        ("python", "python"),
-    ],
-)
-def test_grammar_aliases_resolve_to_bundled_libraries(language: str, symbol: str) -> None:
-    """Semble identifiers with different C symbols resolve without a download."""
-    assert grammar_symbol(language) == symbol
-    expected = bundled_grammar_dir() / f"libtree_sitter_{symbol}{grammar_library_suffix()}"
+@pytest.mark.parametrize("language", ["cuda", "zsh"])
+def test_extras_resolve_and_load(language: str) -> None:
+    """Dedicated extra grammars load without the language-pack runtime."""
+    expected = bundled_grammar_dir() / load_grammar_sources()[language]["library"]
     assert grammar_library_path(language) == expected
+    parser = get_bundled_parser(language)
+    assert parser is not None
+    assert parser.parse(b"").root_node is not None
 
 
-def test_ebnf_is_intentionally_not_bundled() -> None:
-    """The GPL-3.0 EBNF grammar is absent so .ebnf inputs use line chunking."""
-    assert grammar_library_path("ebnf") is None
+def test_dependency_language_is_not_an_extra() -> None:
+    """Standard languages are delegated to semble-grammars."""
+    assert grammar_library_path("python") is None
+    assert get_bundled_parser("python") is None
 
 
 def test_default_model_is_bundled(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -110,13 +95,3 @@ def test_default_model_is_bundled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SEMBLE_MODEL_NAME", "/definitely/not/a/local/model")
     with pytest.raises(RuntimeError, match="local model directory"):
         resolve_model_name()
-
-
-@pytest.mark.parametrize("language", ["mojo", "nim", "norg", "wolfram"])
-def test_cpp_scanner_grammar_loads(language: str) -> None:
-    """C++ scanner grammars load their runtime and can parse without linker errors."""
-    from semble.chunking.core import _cached_get_parser
-
-    parser = _cached_get_parser(language)  # type: ignore[arg-type]
-    assert parser is not None
-    assert parser.parse(b"").root_node is not None

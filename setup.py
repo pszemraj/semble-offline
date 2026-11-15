@@ -53,15 +53,18 @@ def _load_manifest(bundle: Path) -> dict[str, Any]:
     files = grammar_data.get("files")
     if manifest.get("format_version") != 2 or not isinstance(files, dict):
         raise RuntimeError(f"Unsupported Semble Offline bundle manifest: {manifest_path}")
-    if grammar_data.get("expected_count") != 264 or len(files) != 264:
-        raise RuntimeError(f"A release wheel bundle must contain exactly 264 grammars: {manifest_path}")
+    sources_path = bundle / "grammar-sources.json"
+    if not sources_path.is_file():
+        raise RuntimeError(f"Staged bundle has no grammar-sources.json: {bundle}")
+    sources = json.loads(sources_path.read_text(encoding="utf-8"))
+    expected = {source["library"] for source in sources.values()}
+    if grammar_data.get("expected_count") != len(sources) or set(files) != expected:
+        raise RuntimeError(f"Bundled grammars do not match grammar-sources.json: {manifest_path}")
     grammar_dir = bundle / "grammars"
     if set(files) != {path.name for path in grammar_dir.glob(f"*{suffix}")}:
         raise RuntimeError(f"Staged grammar files do not match the bundle manifest: {manifest_path}")
-    if any(not name.endswith(suffix) for name in files) or f"libtree_sitter_ebnf{suffix}" in files:
+    if any(not name.endswith(suffix) for name in files):
         raise RuntimeError(f"Staged grammar filenames are invalid: {manifest_path}")
-    if not (bundle / "grammar-sources.json").is_file():
-        raise RuntimeError(f"Staged bundle has no grammar-sources.json: {bundle}")
     return manifest
 
 

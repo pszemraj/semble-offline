@@ -3,38 +3,23 @@ name: semble-search
 description: Code search agent for exploring any codebase. Use for finding code by intent, locating implementations, understanding how something works, or discovering related code. Prefer over Bash/Read for any semantic or exploratory question.
 ---
 
-Use `semble search` to find code by describing what it does or naming a symbol/identifier, instead of grep:
+Use `semble search` to find code by behavior or symbol name. Use one focused query at a time:
 
 ```bash
-semble search "authentication flow" ./my-project --max-snippet-lines 10  # first 10 lines only, concise
-semble search "save_pretrained" ./my-project                          # full chunk content
-semble search "save model to disk" ./my-project --top-k 10           # more results
-```
-
-Results are cached automatically on first run and invalidated when files change.
-
-Use `--content docs` to search documentation and prose, `--content config` for config files (yaml, toml, etc.), or `--content all` to search code, docs, and config:
-
-```bash
+semble search "authentication flow" ./my-project --max-snippet-lines 10
+semble search "save_pretrained" ./my-project
+semble search "save model to disk" ./my-project --top-k 10
 semble search "deployment guide" ./my-project --content docs
 semble search "database host port" ./my-project --content config
 semble search "authentication" ./my-project --content all
-```
-
-Use `semble find-related` to discover code similar to a known location (pass `file_path` and `line` from a prior search result):
-
-```bash
 semble find-related src/auth.py 42 ./my-project
+semble search "invoice endpoint" ./service-a ../service-b
 ```
 
-`path` defaults to the current directory when omitted; git URLs are accepted.
+Search returns full chunks by default; `--max-snippet-lines` limits source lines per result and `--top-k` controls the result count. Select `--content docs` for prose, `config` for configuration files, or `all` for code, docs, and config together.
 
-If `semble` is not on `$PATH`, use `python -m semble` from the environment where it is installed.
+Paths default to the current directory. Multiple paths share one ranked result set, with repository-prefixed result paths and a JSON `repos` map. Use the returned path and line with `find-related` and the same search roots to find similar implementations. A Git URL requests a network clone; use local paths when offline.
 
-### Workflow
+The index is built on first use and updated incrementally when files change. Read the relevant function or class at a returned location before editing. Use exact-text search when you need every occurrence of a known literal.
 
-1. Start with `semble search` to find relevant chunks. The index is built and cached automatically.
-2. Use `--content docs` for documentation, `--content config` for config files, or `--content all` for everything.
-3. Navigate directly to the returned file and line. Do not re-search or grep for the same content.
-4. Optionally use `semble find-related` with a promising result's `file_path` and `line` to discover related implementations.
-5. Use grep only when you need every occurrence of a literal string across the whole repo (e.g., all callers of a renamed function).
+If `semble` is not on `$PATH`, use `python -m semble` from the environment where Semble Offline is installed. Keep that offline installation in place.

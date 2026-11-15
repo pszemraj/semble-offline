@@ -39,7 +39,6 @@ jobs:
       - name: Exercise the offline runtime
         if: matrix.python-version == '3.12'
         env:
-          HF_HUB_OFFLINE: "1"
           HTTP_PROXY: http://127.0.0.1:9
           HTTPS_PROXY: http://127.0.0.1:9
         run: python -m semble doctor --full

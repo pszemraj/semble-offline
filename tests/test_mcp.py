@@ -1,4 +1,5 @@
 import asyncio
+import json
 import threading
 import time
 from pathlib import Path
@@ -9,14 +10,14 @@ import pytest
 from model2vec import StaticModel
 
 from semble.mcp import _CACHE_MAX_SIZE, _IndexCache, create_server, serve
-from semble.types import Chunk, SearchResult
+from semble.types import Chunk, ContentType, SearchResult
 from semble.utils import format_results, is_git_url, resolve_chunk
 from tests.conftest import make_chunk
 
 
 def _tool_text(result: Any) -> str:
-    """Extract the text string from a FastMCP call_tool result."""
-    return result[0][0].text
+    """Extract the text string from an MCP call_tool result."""
+    return result.content[0].text
 
 
 async def _call_tool(
@@ -29,7 +30,7 @@ async def _call_tool(
     index_chunks: list[Chunk] | None = None,
 ) -> str:
     """Patch SembleIndex.from_path with a fake index and invoke the tool, returning the text."""
-    fake_index = MagicMock()
+    fake_index = MagicMock(sources={})
     getattr(fake_index, index_method).return_value = index_return
     if index_chunks is not None:
         fake_index.chunks = index_chunks
@@ -64,6 +65,10 @@ def test_resolve_chunk() -> None:
 
     # Line out of range returns None.
     assert resolve_chunk([interior], "src/a.py", 99) is None
+
+    # Separator mismatch (e.g. backslash-stored path, forward-slash query) still matches.
+    backslash_chunk = make_chunk("line1\nline2\nline3", "src\\a.py")
+    assert resolve_chunk([backslash_chunk], "src/a.py", 2) is backslash_chunk
 
 
 @pytest.mark.parametrize(
@@ -140,10 +145,17 @@ async def test_index_cache_builds_and_caches(
     ):
         first = await cache.get(resolved_source)
         second = await cache.get(resolved_source)
+        docs_first = await cache.get(resolved_source, content=(ContentType.DOCS,))
+        docs_second = await cache.get(resolved_source, content=(ContentType.DOCS,))
     assert first is fake_index
     assert second is fake_index
-    mock_build.assert_called_once()
-    mock_save.assert_called_once_with(fake_index, cache._compute_cache_key(resolved_source))
+    assert docs_first is fake_index
+    assert docs_second is fake_index
+    assert [call.kwargs["content"] for call in mock_build.call_args_list] == [
+        (ContentType.CODE,),
+        (ContentType.DOCS,),
+    ]
+    assert mock_save.call_count == 2
 
 
 @pytest.mark.anyio
@@ -182,12 +194,12 @@ async def test_index_cache_staleness_check_scope(
 @pytest.mark.anyio
 async def test_index_cache_skips_staleness_check_during_cooldown(cache: _IndexCache, tmp_path: Path) -> None:
     """A slow-to-build local path is not revalidated again until its cooldown elapses."""
-    cache_key = str(tmp_path.resolve())
+    cache_key = cache._compute_cache_key(str(tmp_path))
     cache._tasks[cache_key] = asyncio.create_task(_succeed())
     await asyncio.sleep(0)  # let the task finish
     cache._revalidate_after[cache_key] = time.monotonic() + 30.0  # a build that took 10s, just finished
     with patch("semble.mcp.get_validated_cache") as mock_validate:
-        await cache._evict_if_stale(str(tmp_path), cache_key)
+        await cache._evict_if_stale(cache_key)
     mock_validate.assert_not_called()
 
 
@@ -202,17 +214,18 @@ async def test_index_cache_skips_staleness_check_for_failed_task(cache: _IndexCa
     async def _raise() -> MagicMock:
         raise RuntimeError("boom")
 
-    cache._tasks[str(tmp_path.resolve())] = asyncio.create_task(_raise())
+    cache_key = cache._compute_cache_key(str(tmp_path))
+    cache._tasks[cache_key] = asyncio.create_task(_raise())
     await asyncio.sleep(0)  # let the task finish
     with patch("semble.mcp.get_validated_cache") as mock_validate:
-        await cache._evict_if_stale(str(tmp_path), str(tmp_path.resolve()))
+        await cache._evict_if_stale(cache_key)
     mock_validate.assert_not_called()
 
 
 @pytest.mark.anyio
 async def test_index_cache_does_not_evict_entry_replaced_during_validation(cache: _IndexCache, tmp_path: Path) -> None:
     """If a concurrent caller already replaced a stale entry, _evict_if_stale must not evict the new one."""
-    cache_key = str(tmp_path.resolve())
+    cache_key = cache._compute_cache_key(str(tmp_path))
     cache._tasks[cache_key] = asyncio.create_task(_succeed())
     await asyncio.sleep(0)
     cache._revalidate_after[cache_key] = 0.0  # cooldown already elapsed
@@ -225,7 +238,7 @@ async def test_index_cache_does_not_evict_entry_replaced_during_validation(cache
         return None
 
     with patch("semble.mcp.get_validated_cache", side_effect=_replace_entry_then_report_stale):
-        await cache._evict_if_stale(str(tmp_path), cache_key)
+        await cache._evict_if_stale(cache_key)
     assert cache._tasks.get(cache_key) is replacement_task
 
 
@@ -345,22 +358,72 @@ async def test_tool_output(
 
 
 @pytest.mark.anyio
+async def test_search_multiple_repos(cache: _IndexCache) -> None:
+    """A list of repos is searched through one merged index, which is reused while its parts are unchanged."""
+    merged = MagicMock(sources={"one": "/p/one", "two": "/p/two"})
+    merged.search.return_value = [SearchResult(chunk=make_chunk("x = 1", "one/a.py"), score=0.9)]
+    with (
+        patch("semble.mcp.SembleIndex.from_path", return_value=MagicMock()),
+        patch("semble.mcp.SembleIndex.merge", return_value=merged) as merge,
+        patch("semble.mcp.save_index_to_cache"),
+    ):
+        server = create_server(cache)
+        result = await server.call_tool("search", {"query": "x", "repo": ["/p/one", "/p/two"]})
+        await server.call_tool("search", {"query": "x", "repo": ["/p/one", "/p/two"]})
+    payload = json.loads(_tool_text(result))
+    assert payload["repos"] == merged.sources
+    assert payload["results"][0]["file_path"] == "one/a.py"
+    merge.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_search_builds_exact_content_indexes(
+    cache: _IndexCache,
+    mock_model: StaticModel,
+    tmp_project: Path,
+) -> None:
+    """MCP search lazily builds the exact requested content index."""
+    (tmp_project / "settings.toml").write_text("project = 'semble'\n")
+    expected = [
+        (None, {".py"}),
+        ("docs", {".md"}),
+        ("config", {".toml"}),
+        ("all", {".md", ".py", ".toml"}),
+    ]
+
+    with (
+        patch("semble.index.index.load_model", return_value=(mock_model, "/fake/model")),
+        patch("semble.mcp.save_index_to_cache"),
+    ):
+        server = create_server(cache)
+        for content, expected_suffixes in expected:
+            args = {"query": "project", "repo": str(tmp_project), "top_k": 20}
+            if content is not None:
+                args["content"] = content
+            result = await server.call_tool("search", args)
+            payload = json.loads(_tool_text(result))
+            assert {Path(item["file_path"]).suffix for item in payload["results"]} == expected_suffixes
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
-    ("load_err", "stdio_yields"),
+    ("load_err", "stdio_yields", "port"),
     [
-        (None, True),
-        (RuntimeError("boom"), True),
-        (None, False),
+        (None, True, None),
+        (RuntimeError("boom"), True, None),
+        (None, False, None),
+        (None, True, 9000),
     ],
-    ids=["model_loads", "model_load_fails", "cancel_pending_init"],
+    ids=["model_loads", "model_load_fails", "cancel_pending_init", "http"],
 )
-async def test_serve_runs_stdio(
+async def test_serve_runs_transport(
     load_err: Exception | None,
     stdio_yields: bool,
+    port: int | None,
 ) -> None:
-    """serve() runs stdio and handles all background init outcomes without raising."""
+    """serve() runs stdio, or HTTP when given a port, and handles all background init outcomes without raising."""
 
-    async def fake_stdio() -> None:
+    async def fake_run(**_: Any) -> None:
         if stdio_yields:
             await asyncio.sleep(0.05)  # let the background init task run
 
@@ -369,11 +432,17 @@ async def test_serve_runs_stdio(
     )
     with (
         patch("semble.mcp.load_model", **load_kwargs),
-        patch("mcp.server.fastmcp.FastMCP.run_stdio_async", side_effect=fake_stdio) as mock_run,
+        patch("mcp.server.mcpserver.MCPServer.run_stdio_async", side_effect=fake_run) as mock_stdio,
+        patch("mcp.server.mcpserver.MCPServer.run_streamable_http_async", side_effect=fake_run) as mock_http,
     ):
-        await serve()
+        await serve(port=port)
 
-    mock_run.assert_called_once()
+    if port is None:
+        mock_stdio.assert_called_once()
+        mock_http.assert_not_called()
+    else:
+        mock_http.assert_called_once_with(port=port)
+        mock_stdio.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -391,24 +460,25 @@ async def test_serve_opens_stdio_before_model_loads() -> None:
 
     with (
         patch("semble.mcp.load_model", side_effect=blocking_load_model),
-        patch("mcp.server.fastmcp.FastMCP.run_stdio_async", side_effect=fake_run_stdio),
+        patch("mcp.server.mcpserver.MCPServer.run_stdio_async", side_effect=fake_run_stdio),
     ):
         await serve()
 
 
 @pytest.mark.anyio
 async def test_index_cache_awaits_model(tmp_path: Path) -> None:
-    """get() blocks until the model is installed, then proceeds."""
+    """get() blocks until the model is installed, then concurrent callers share one build."""
     cache = _IndexCache()  # no model yet
     fake_index = MagicMock()
-    with patch("semble.mcp.SembleIndex.from_path", return_value=fake_index):
-        get_task = asyncio.create_task(cache.get(str(tmp_path)))
+    with patch("semble.mcp.SembleIndex.from_path", return_value=fake_index) as from_path:
+        tasks = [asyncio.create_task(cache.get(str(tmp_path))) for _ in range(2)]
         await asyncio.sleep(0.01)
-        assert not get_task.done(), "get() must block until the model is installed"
+        assert not any(t.done() for t in tasks), "get() must block until the model is installed"
         cache._model_path = "/fake/model"
         cache._model_ready.set()
-        result = await asyncio.wait_for(get_task, timeout=1.0)
-    assert result is fake_index
+        results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=1.0)
+    assert results == [fake_index, fake_index]
+    from_path.assert_called_once()
 
 
 @pytest.mark.anyio
@@ -426,23 +496,24 @@ async def test_index_cache_propagates_model_error(tmp_path: Path) -> None:
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    ("repo", "tool", "extra_args"),
+    ("repo", "tool", "extra_args", "expected"),
     [
-        ("file:///home/user/secret", "search", {"query": "foo"}),
-        ("ssh://internal-host/repo", "search", {"query": "foo"}),
-        ("git@github.com:org/repo", "search", {"query": "foo"}),
-        ("file:///home/user/secret", "find_related", {"file_path": "src/foo.py", "line": 1}),
-        ("ssh://internal-host/repo", "find_related", {"file_path": "src/foo.py", "line": 1}),
+        ("file:///home/user/secret", "search", {"query": "foo"}, "Only https://"),
+        ("ssh://internal-host/repo", "search", {"query": "foo"}, "Only https://"),
+        ("git@github.com:org/repo", "search", {"query": "foo"}, "Only https://"),
+        ("file:///home/user/secret", "find_related", {"file_path": "src/foo.py", "line": 1}, "Only https://"),
+        ("ssh://internal-host/repo", "find_related", {"file_path": "src/foo.py", "line": 1}, "Only https://"),
+        ([], "search", {"query": "foo"}, "at least one"),
     ],
-    ids=["file_search", "ssh_search", "scp_search", "file_find_related", "ssh_find_related"],
+    ids=["file_search", "ssh_search", "scp_search", "file_find_related", "ssh_find_related", "empty_list"],
 )
-async def test_tool_rejects_unsafe_repo(
-    cache: _IndexCache, repo: str, tool: str, extra_args: dict[str, object]
+async def test_tool_rejects_invalid_repo(
+    cache: _IndexCache, repo: str | list[str], tool: str, extra_args: dict[str, object], expected: str
 ) -> None:
-    """Both tools reject unsafe git transport schemes (ssh://, file://, SCP-form) supplied as repo."""
+    """Both tools reject unsafe git transport schemes (ssh://, file://, SCP-form) and an empty repo list."""
     server = create_server(cache)
     result = await server.call_tool(tool, {**extra_args, "repo": repo})
-    assert "Only https://" in _tool_text(result)
+    assert expected in _tool_text(result)
 
 
 @pytest.mark.anyio
@@ -454,21 +525,48 @@ async def test_index_cache_lru_eviction(cache: _IndexCache, tmp_path: Path) -> N
     with patch("semble.mcp.SembleIndex.from_path", return_value=MagicMock()):
         for d in dirs[:_CACHE_MAX_SIZE]:
             await cache.get(str(d))
-        first_key = str(dirs[0].resolve())
+        first_key = cache._compute_cache_key(str(dirs[0]))
         assert first_key in cache._tasks
         await cache.get(str(dirs[_CACHE_MAX_SIZE]))
     assert first_key not in cache._tasks
     assert len(cache._tasks) == _CACHE_MAX_SIZE
 
 
+@pytest.mark.anyio
+async def test_index_cache_idle_timeout_eviction(cache: _IndexCache, tmp_path: Path) -> None:
+    """Entries are dropped once unused for the idle timeout, which starts after the build and resets on access."""
+
+    def slow_build(*args: Any, **kwargs: Any) -> MagicMock:
+        time.sleep(0.15)  # longer than the timeout
+        return MagicMock()
+
+    key = cache._compute_cache_key(str(tmp_path))
+    with (
+        patch("semble.mcp._CACHE_IDLE_TIMEOUT", 0.1),
+        patch("semble.mcp.SembleIndex.from_path", side_effect=slow_build),
+        patch("semble.mcp.get_validated_cache", return_value=MagicMock()),
+    ):
+        await cache.get(str(tmp_path))
+        assert key in cache._tasks
+        first_timer = cache._idle_timers[key]
+        cache._merged = ([], MagicMock())
+        await cache.get(str(tmp_path))
+        assert first_timer.cancelled()
+        assert key in cache._tasks
+        await asyncio.sleep(0.3)
+    assert key not in cache._tasks
+    assert key not in cache._idle_timers
+    assert cache._merged is None
+
+
 def test_cache_evict(cache: _IndexCache, tmp_path: Path) -> None:
-    """evict() removes an existing cache entry by resolved path."""
-    key = str(tmp_path.resolve())
+    """evict() removes an existing exact cache entry."""
+    key = cache._compute_cache_key(str(tmp_path))
     cache._tasks[key] = MagicMock()
-    cache.evict(str(tmp_path))
+    cache.evict(key)
     assert key not in cache._tasks
 
 
 def test_cache_evict_missing(cache: _IndexCache, tmp_path: Path) -> None:
-    """evict() on an unknown path is a no-op."""
-    cache.evict(str(tmp_path))  # should not raise
+    """evict() on an unknown key is a no-op."""
+    cache.evict(cache._compute_cache_key(str(tmp_path)))  # should not raise

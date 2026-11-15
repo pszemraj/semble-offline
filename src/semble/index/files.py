@@ -1,3 +1,4 @@
+import os
 from collections import defaultdict
 from collections.abc import Sequence
 from enum import Enum
@@ -5,7 +6,7 @@ from pathlib import Path
 
 from semble.types import ContentType
 
-_MAX_FILE_BYTES = 1_000_000  # 1 MB max file size to read and index
+MAX_FILE_BYTES = int(os.environ.get("SEMBLE_MAX_FILE_BYTES", 1_000_000))  # Max file size to read and index
 _EMPTY_FILE_BYTES = 128
 _EXTENSION_TO_LANGUAGE = {
     ".4th": "forth",
@@ -78,6 +79,7 @@ _EXTENSION_TO_LANGUAGE = {
     ".cu": "cuda",
     ".cuda": "cuda",
     ".cue": "cue",
+    ".cuh": "cuda",
     ".cxx": "cpp",
     ".cylc": "cylc",
     ".d": "d",
@@ -198,6 +200,7 @@ _EXTENSION_TO_LANGUAGE = {
     ".lua": "lua",
     ".luau": "luau",
     ".m": "objc",
+    ".mm": "cpp",
     ".magik": "magik",
     ".makefile": "make",
     ".markdown": "markdown",
@@ -440,22 +443,16 @@ _DATA_LANGUAGES = {
 }
 
 
-def _inv_mapping(mapping: dict[str, str]) -> dict[str, list[str]]:
-    """Invert a mapping, taking into account duplicate values."""
-    inv: defaultdict[str, list[str]] = defaultdict(list)
-    for key, value in mapping.items():
-        inv[value].append(key)
-    return dict(inv)
-
-
 ALL_LANGUAGES = frozenset(_EXTENSION_TO_LANGUAGE.values())
 _CODE_LANGUAGES = ALL_LANGUAGES - _DOC_LANGUAGES - _CONFIG_LANGUAGES - _DATA_LANGUAGES
-_LANGUAGE_TO_EXTENSION = _inv_mapping(_EXTENSION_TO_LANGUAGE)
+_LANGUAGE_TO_EXTENSIONS: defaultdict[str, list[str]] = defaultdict(list)
+for _extension, _language in _EXTENSION_TO_LANGUAGE.items():
+    _LANGUAGE_TO_EXTENSIONS[_language].append(_extension)
 
-_CONTENT_TYPE_LANGUAGES: dict[ContentType, frozenset[str]] = {
-    ContentType.CODE: frozenset(_CODE_LANGUAGES),
-    ContentType.DOCS: frozenset(_DOC_LANGUAGES),
-    ContentType.CONFIG: frozenset(_CONFIG_LANGUAGES),
+_CONTENT_TYPE_LANGUAGES = {
+    ContentType.CODE: _CODE_LANGUAGES,
+    ContentType.DOCS: _DOC_LANGUAGES,
+    ContentType.CONFIG: _CONFIG_LANGUAGES,
 }
 
 
@@ -466,36 +463,31 @@ def detect_language(file_name: Path) -> str | None:
 
 def get_extensions(types: Sequence[ContentType]) -> list[str]:
     """Returns a list of supported file extensions for the given content types."""
-    languages: set[str] = set()
-    for content_type in types:
-        languages.update(_CONTENT_TYPE_LANGUAGES[content_type])
-    all_extensions: set[str] = set()
-    for language in languages:
-        all_extensions.update(_LANGUAGE_TO_EXTENSION.get(language, set()))
-
-    return sorted(all_extensions)
+    return sorted(
+        {
+            ext
+            for content_type in types
+            for lang in _CONTENT_TYPE_LANGUAGES[content_type]
+            for ext in _LANGUAGE_TO_EXTENSIONS.get(lang, [])
+        }
+    )
 
 
 class FileStatus(str, Enum):
-    NEWER = "newer"
     TOO_LARGE = "too_large"
     EMPTY = "empty"
     VALID = "valid"
 
 
 def read_file_text(file_path: Path) -> str:
-    """Read a file's text content, replacing invalid characters and silencing read errors."""
+    """Read a file's text content, replacing invalid UTF-8 characters."""
     return file_path.read_text(encoding="utf-8", errors="replace")
 
 
-def get_file_status(file_path: Path, write_time: float | None) -> FileStatus:
-    """Checks if a file should be indexed based on its size and modification time."""
-    stat = file_path.stat()
-    if write_time is not None and stat.st_mtime > write_time:
-        # Index invalid, file invalid
-        return FileStatus.NEWER
+def get_file_status(file_path: Path, stat: os.stat_result) -> FileStatus:
+    """Checks if a file should be indexed based on its size."""
     size = stat.st_size
-    if size > _MAX_FILE_BYTES:
+    if size > MAX_FILE_BYTES:
         # index valid, file invalid
         return FileStatus.TOO_LARGE
     if size < _EMPTY_FILE_BYTES and not read_file_text(file_path).strip():

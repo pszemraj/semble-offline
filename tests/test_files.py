@@ -18,6 +18,9 @@ def test_detect_language() -> None:
     assert detect_language(Path("a.py")) == "python"
     assert detect_language(Path("b.js")) == "javascript"
     assert detect_language(Path("c.txt")) is None
+    assert detect_language(Path("kernel.cu")) == "cuda"
+    assert detect_language(Path("kernel.cuh")) == "cuda"
+    assert detect_language(Path("bridge.mm")) == "cpp"
 
 
 def test_language_sets_are_consistent() -> None:
@@ -32,7 +35,7 @@ def test_language_sets_are_consistent() -> None:
 @pytest.mark.parametrize(
     ("types", "includes", "excludes"),
     [
-        ([ContentType.CODE], [".py"], [".md", ".csv", ".toml"]),
+        ([ContentType.CODE], [".py", ".cu", ".cuh", ".mm", ".zsh"], [".md", ".csv", ".toml"]),
         ([ContentType.DOCS], [".md"], [".py", ".csv", ".toml"]),
         ([ContentType.CONFIG], [".toml"], [".py", ".md", ".csv"]),
         ([ContentType.CODE, ContentType.DOCS], [".py", ".md"], [".csv", ".toml"]),

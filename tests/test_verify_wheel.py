@@ -1,3 +1,4 @@
+import json
 import struct
 import zipfile
 from pathlib import Path
@@ -16,6 +17,7 @@ from scripts.verify_wheel import (
     PLATFORM_MACOS,
     PT_DYNAMIC,
     _platform_details,
+    _verify_grammar_set,
     _verify_metadata,
     _verify_model_set,
     _verify_native_library,
@@ -64,12 +66,12 @@ def _platform_manifest(operating_system: str = "linux") -> dict[str, object]:
 
 def _metadata_wheel(
     tmp_path: Path,
-    wheel_dirs: tuple[str, ...] = ("semble-0.5.1+offline.2.dist-info",),
-    metadata_dir: str = "semble-0.5.1+offline.2.dist-info",
+    wheel_dirs: tuple[str, ...] = ("semble-0.7.3+offline.1.dist-info",),
+    metadata_dir: str = "semble-0.7.3+offline.1.dist-info",
     requires_python: str = ">=3.10,<3.15",
 ) -> Path:
     """Write the metadata members needed by the metadata verifier."""
-    path = tmp_path / "semble-0.5.1+offline.2-py3-none-manylinux_2_34_x86_64.whl"
+    path = tmp_path / "semble-0.7.3+offline.1-py3-none-manylinux_2_34_x86_64.whl"
     with zipfile.ZipFile(path, "w") as wheel:
         for directory in wheel_dirs:
             wheel.writestr(
@@ -78,7 +80,7 @@ def _metadata_wheel(
             )
         wheel.writestr(
             f"{metadata_dir}/METADATA",
-            f"Metadata-Version: 2.4\nVersion: 0.5.1+offline.2\nRequires-Python: {requires_python}\n",
+            f"Metadata-Version: 2.4\nVersion: 0.7.3+offline.1\nRequires-Python: {requires_python}\n",
         )
     return path
 
@@ -200,6 +202,32 @@ def test_rejects_undeclared_model_member() -> None:
         _verify_model_set(names, manifest)
 
 
+@pytest.mark.parametrize("count", [2, 3])
+def test_grammar_set_follows_source_manifest(tmp_path: Path, count: int) -> None:
+    """Wheel verification accepts the declared extras without a fixed bundle size."""
+    files = {f"libtree_sitter_language_{index}.so": "unused" for index in range(count)}
+    sources = {f"language_{index}": {"library": name} for index, name in enumerate(files)}
+    manifest = {"grammars": {"files": files, "expected_count": count}}
+    path = tmp_path / "extras.whl"
+    with zipfile.ZipFile(path, "w") as wheel:
+        wheel.writestr("semble/_bundled/grammar-sources.json", json.dumps(sources))
+    with zipfile.ZipFile(path) as wheel:
+        assert _verify_grammar_set(wheel, set(files), manifest, ".so") == files
+
+
+def test_grammar_set_rejects_undeclared_extra(tmp_path: Path) -> None:
+    """A matching asset count cannot hide a library absent from the source manifest."""
+    files = {"libtree_sitter_cuda.so": "unused", "libtree_sitter_undeclared.so": "unused"}
+    sources = {language: {"library": f"libtree_sitter_{language}.so"} for language in ("cuda", "zsh")}
+    manifest = {"grammars": {"files": files, "expected_count": len(files)}}
+    path = tmp_path / "extras.whl"
+    with zipfile.ZipFile(path, "w") as wheel:
+        wheel.writestr("semble/_bundled/grammar-sources.json", json.dumps(sources))
+    with zipfile.ZipFile(path) as wheel:
+        with pytest.raises(RuntimeError, match="source provenance"):
+            _verify_grammar_set(wheel, set(files), manifest, ".so")
+
+
 def test_rejects_duplicate_wheel_members(tmp_path: Path) -> None:
     """Duplicate ZIP members cannot hide conflicting release content."""
     path = tmp_path / "duplicate.whl"
@@ -213,7 +241,7 @@ def test_rejects_duplicate_wheel_members(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("policy", "priority"),
-    [("manylinux_2_34_x86_64", 100), ("manylinux_2_17_x86_64", 50)],
+    [("manylinux_2_34_x86_64", 58), ("manylinux_2_17_x86_64", 80)],
 )
 def test_accepts_equal_or_more_compatible_auditwheel_policy(
     monkeypatch: pytest.MonkeyPatch,
@@ -221,13 +249,13 @@ def test_accepts_equal_or_more_compatible_auditwheel_policy(
     priority: int,
 ) -> None:
     """A wheel may meet the declared Linux floor or an older, wider-compatible one."""
-    monkeypatch.setattr("scripts.verify_wheel._auditwheel_policy", lambda path: (policy, priority, 100))
+    monkeypatch.setattr("scripts.verify_wheel._auditwheel_policy", lambda path: (policy, priority, 58))
     assert verify_linux_policy(Path("wheel.whl")) == policy
 
 
 @pytest.mark.parametrize(
     ("policy", "priority"),
-    [("manylinux_2_35_x86_64", 101), ("linux_x86_64", 0)],
+    [("manylinux_2_35_x86_64", 57), ("linux_x86_64", 0)],
 )
 def test_rejects_incompatible_auditwheel_policy(
     monkeypatch: pytest.MonkeyPatch,
@@ -235,6 +263,6 @@ def test_rejects_incompatible_auditwheel_policy(
     priority: int,
 ) -> None:
     """A newer glibc requirement or bare Linux policy cannot carry the declared tag."""
-    monkeypatch.setattr("scripts.verify_wheel._auditwheel_policy", lambda path: (policy, priority, 100))
+    monkeypatch.setattr("scripts.verify_wheel._auditwheel_policy", lambda path: (policy, priority, 58))
     with pytest.raises(RuntimeError, match="does not satisfy manylinux_2_34_x86_64"):
         verify_linux_policy(Path("wheel.whl"))

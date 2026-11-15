@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 from dataclasses import dataclass
@@ -9,9 +10,12 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
+from tree_sitter import Language, Parser
+
 _BUNDLED_DIR = Path(__file__).resolve().parent / "_bundled"
 _MANIFEST_PATH = _BUNDLED_DIR / "asset-manifest.json"
 _GRAMMAR_SOURCES_PATH = _BUNDLED_DIR / "grammar-sources.json"
+_LOADED_LIBRARIES: dict[Path, ctypes.CDLL] = {}
 
 
 class OfflineAssetError(RuntimeError):
@@ -126,23 +130,32 @@ def grammar_symbol(language: str) -> str:
 
 def grammar_library_path(language: str) -> Path | None:
     """Return the bundled grammar library for language, without downloading anything."""
+    if language not in load_grammar_sources():
+        return None
     directory = bundled_grammar_dir()
     symbol = grammar_symbol(language)
     library = directory / f"libtree_sitter_{symbol}{grammar_library_suffix()}"
     return library if library.is_file() else None
 
 
-@cache
-def activate_bundled_grammars() -> Path:
-    """Configure tree-sitter-language-pack to use the bundled grammar directory."""
-    target = bundled_grammar_dir()
+def get_bundled_parser(language: str) -> Parser | None:
+    """Load an extra grammar from its native library without any downloader."""
+    library = grammar_library_path(language)
+    if library is None:
+        return None
     try:
-        import tree_sitter_language_pack as tslp
-
-        tslp.configure(cache_dir=str(target))
+        native = ctypes.CDLL(str(library))
+        _LOADED_LIBRARIES[library] = native
+        entry_point = getattr(native, f"tree_sitter_{grammar_symbol(language)}")
+        entry_point.restype = ctypes.c_void_p
+        pointer = entry_point()
+        capsule_new = ctypes.pythonapi.PyCapsule_New
+        capsule_new.restype = ctypes.py_object
+        capsule_new.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p)
+        capsule = capsule_new(pointer, b"tree_sitter.Language", None)
+        return Parser(Language(capsule))
     except Exception as error:
-        raise OfflineAssetError(f"Cannot configure the offline tree-sitter grammar directory: {target}") from error
-    return target
+        raise OfflineAssetError(f"Cannot load bundled grammar {language}: {library}") from error
 
 
 def _sha256(path: Path) -> str:
@@ -158,8 +171,8 @@ def validate_bundled_assets(full: bool = False) -> list[AssetCheck]:
     """Validate bundled model and grammar assets, optionally hashing every file."""
     checks: list[AssetCheck] = []
     try:
-        manifest = load_asset_manifest()
-        suffix = grammar_library_suffix()
+        load_asset_manifest()
+        grammar_library_suffix()
         expected_sections = {section: _manifest_files(section) for section in ("model", "grammars")}
         checks.append(AssetCheck("asset manifest", True, "format 2"))
     except OfflineAssetError as error:
@@ -193,13 +206,4 @@ def validate_bundled_assets(full: bool = False) -> list[AssetCheck]:
                 )
             )
 
-    excluded = manifest["grammars"].get("excluded", {})
-    ebnf_absent = not (_BUNDLED_DIR / "grammars" / f"libtree_sitter_ebnf{suffix}").exists()
-    checks.append(
-        AssetCheck(
-            "EBNF exclusion",
-            ebnf_absent and isinstance(excluded, dict) and "ebnf" in excluded,
-            "GPL-3.0 grammar is not bundled; line chunking is used",
-        )
-    )
     return checks

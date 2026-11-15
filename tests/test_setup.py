@@ -31,10 +31,11 @@ def _make_bundle(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
     bundle = tmp_path / "bundle"
     grammar_dir = bundle / "grammars"
     grammar_dir.mkdir(parents=True)
-    grammar_files = {f"libtree_sitter_language_{index:03d}.so": "unused" for index in range(264)}
+    grammar_files = {f"libtree_sitter_{language}.so": "unused" for language in ("cuda", "zsh", "example")}
     for filename in grammar_files:
         (grammar_dir / filename).touch()
-    (bundle / "grammar-sources.json").write_text("{}\n", encoding="utf-8")
+    sources = {filename.removesuffix(".so"): {"library": filename} for filename in grammar_files}
+    (bundle / "grammar-sources.json").write_text(json.dumps(sources), encoding="utf-8")
     manifest = {
         "format_version": 2,
         "platform": {
@@ -44,7 +45,7 @@ def _make_bundle(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
             "operating_system": "linux",
             "wheel_tag": "manylinux_2_34_x86_64",
         },
-        "grammars": {"expected_count": 264, "files": grammar_files},
+        "grammars": {"expected_count": len(sources), "files": grammar_files},
     }
     _write_manifest(bundle, manifest)
     return bundle, manifest
@@ -76,12 +77,12 @@ def test_load_manifest_rejects_unsupported_format(setup_namespace: dict[str, Any
         setup_namespace["_load_manifest"](bundle)
 
 
-def test_load_manifest_requires_exact_grammar_count(setup_namespace: dict[str, Any], tmp_path: Path) -> None:
-    """A release bundle must declare exactly 264 grammars."""
+def test_load_manifest_requires_declared_grammar_count(setup_namespace: dict[str, Any], tmp_path: Path) -> None:
+    """The asset count must match the declared source set."""
     bundle, manifest = _make_bundle(tmp_path)
-    manifest["grammars"]["expected_count"] = 263
+    manifest["grammars"]["expected_count"] -= 1
     _write_manifest(bundle, manifest)
-    with pytest.raises(RuntimeError, match="exactly 264 grammars"):
+    with pytest.raises(RuntimeError, match="do not match grammar-sources.json"):
         setup_namespace["_load_manifest"](bundle)
 
 
@@ -121,17 +122,17 @@ def test_load_manifest_reports_malformed_sections(setup_namespace: dict[str, Any
         setup_namespace["_load_manifest"](bundle)
 
 
-def test_load_manifest_excludes_ebnf(setup_namespace: dict[str, Any], tmp_path: Path) -> None:
-    """The release bundle cannot include the excluded EBNF grammar."""
+def test_load_manifest_rejects_undeclared_grammar(setup_namespace: dict[str, Any], tmp_path: Path) -> None:
+    """A library absent from grammar-sources.json cannot replace a declared extra."""
     bundle, manifest = _make_bundle(tmp_path)
     grammar_files = manifest["grammars"]["files"]
     replaced = next(iter(grammar_files))
     (bundle / "grammars" / replaced).unlink()
     del grammar_files[replaced]
-    grammar_files["libtree_sitter_ebnf.so"] = "unused"
-    (bundle / "grammars" / "libtree_sitter_ebnf.so").touch()
+    grammar_files["libtree_sitter_undeclared.so"] = "unused"
+    (bundle / "grammars" / "libtree_sitter_undeclared.so").touch()
     _write_manifest(bundle, manifest)
-    with pytest.raises(RuntimeError, match="grammar filenames are invalid"):
+    with pytest.raises(RuntimeError, match="do not match grammar-sources.json"):
         setup_namespace["_load_manifest"](bundle)
 
 
@@ -145,6 +146,11 @@ def test_select_bundle_rejects_host_platform_mismatch(
     for path in (bundle / "grammars").glob("*.so"):
         path.rename(path.with_suffix(".dylib"))
     manifest["grammars"]["files"] = dylib_files
+    sources_path = bundle / "grammar-sources.json"
+    sources = json.loads(sources_path.read_text(encoding="utf-8"))
+    for source in sources.values():
+        source["library"] = source["library"].removesuffix(".so") + ".dylib"
+    sources_path.write_text(json.dumps(sources), encoding="utf-8")
     manifest["platform"] = {
         "architecture": "arm64",
         "library_suffix": ".dylib",
