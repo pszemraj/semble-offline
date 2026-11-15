@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from semble.cli import _cli_main, _maybe_save_index, _run_clear, main
+from semble.installer.agents import AGENTS
 from semble.types import ContentType, SearchResult
 from semble.version import __version__
 from tests.conftest import make_chunk
@@ -208,6 +209,19 @@ def test_version_flag(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFix
         main()
     assert exc_info.value.code == 0
     assert "0.7.3+offline.1" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("command", ["install", "uninstall"])
+def test_install_help_lists_agent_ids(
+    command: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`install --help` and `uninstall --help` list every valid --agent ID, which the install docs point readers to."""
+    monkeypatch.setattr(sys, "argv", ["semble", command, "--help"])
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert f"({', '.join(a.id for a in AGENTS)})" in out
 
 
 def test_doctor_command(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -348,7 +348,7 @@ def _cli_main() -> None:
             nargs="+",
             choices=[a.id for a in AGENTS],
             metavar="AGENT",
-            help=f"Agent(s) to {verb} non-interactively, e.g. --agent claude pi. Skips prompts.",
+            help=f"Agent(s) to {verb} non-interactively ({', '.join(a.id for a in AGENTS)}), e.g. --agent claude pi. Skips prompts.",
         )
         p.add_argument(
             "--type",
